@@ -1,0 +1,16 @@
+{
+  "id": "search_web",
+  "type": "search",
+  "description": "Найти информацию в интернете",
+  "phrases": [
+    "найди",
+    "поищи",
+    "поиск",
+    "загугли"
+  ],
+  "slots": ["query"],
+  "threshold": 0.66,
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}

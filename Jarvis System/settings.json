@@ -1,0 +1,17 @@
+{
+  "groq_api_key": "",
+  "groq_model": "openai/gpt-oss-120b",
+  "elevenlabs_model": "eleven_multilingual_v2",
+  "elevenlabs_voice_id": "",
+  "elevenlabs_stability": 0.48,
+  "elevenlabs_similarity": 0.82,
+  "elevenlabs_style": 0.12,
+  "elevenlabs_speed": 0.96,
+  "elevenlabs_speaker_boost": true,
+  "wake_word_enabled": true,
+  "rustpotter_cli_path": "resources/rustpotter/rustpotter-cli_win_x86_64.exe",
+  "rustpotter_model_path": "resources/rustpotter/jarvis-ru.rpw",
+  "rustpotter_device_index": 0,
+  "wake_word_threshold": 0.5,
+  "vosk_model_path": "resources/vosk/vosk-model-small-ru-0.22"
+}

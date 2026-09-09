@@ -1,0 +1,18 @@
+{
+  "id": "open_steam",
+  "type": "app",
+  "description": "Открыть Steam",
+  "uri": "steam://open/main",
+  "fallback_url": "https://store.steampowered.com/",
+  "missing_message": "Steam не установлен. Открыл Steam в браузере.",
+  "success_message": "Steam открыт.",
+  "phrases": [
+    "открой стим",
+    "запусти стим",
+    "открыть стим",
+    "запустить стим"
+  ],
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}

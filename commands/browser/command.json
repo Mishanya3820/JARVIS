@@ -1,0 +1,15 @@
+{
+  "id": "open_browser",
+  "type": "browser",
+  "description": "Открыть браузер",
+  "phrases": [
+    "открой браузер",
+    "открыть браузер",
+    "запусти браузер",
+    "запустить браузер"
+  ],
+  "url": "https://www.google.com",
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}
