@@ -1,102 +1,138 @@
-"""ElevenLabs TTS для онлайн-ответов JARVIS.
+"""Локальный TTS JARVIS на базе Coqui XTTS-v2.
 
-Silero TTS здесь намеренно отсутствует. Офлайн-ответы воспроизводятся
-заготовленными WAV-файлами, а динамическая речь генерируется ElevenLabs.
+XTTS-v2 работает полностью локально после загрузки модели и умеет
+клонировать голос по одному или нескольким WAV-файлам.
 """
-
 from __future__ import annotations
 
-import io
 import os
 import threading
-import wave
 
 import numpy as np
 import sounddevice as sd
-from elevenlabs import VoiceSettings
-from elevenlabs.client import ElevenLabs
 
-from jarvis_settings import (
-    get_elevenlabs_api_key,
-    get_elevenlabs_voice_id,
-    load_settings,
-)
+from jarvis_settings import load_settings
 
-
-_client: ElevenLabs | None = None
-_client_lock = threading.Lock()
-
-
-def _get_client() -> ElevenLabs:
-    global _client
-    if _client is None:
-        with _client_lock:
-            if _client is None:
-                api_key = get_elevenlabs_api_key()
-                if not api_key:
-                    raise RuntimeError(
-                        "Не найден ELEVENLABS_API_KEY. "
-                        "Задай его как переменную окружения Windows."
-                    )
-                _client = ElevenLabs(api_key=api_key)
-    return _client
+try:
+    import torch
+    from TTS.api import TTS
+except ImportError as exc:  # pragma: no cover - зависит от окружения
+    torch = None
+    TTS = None
+    _IMPORT_ERROR = exc
+else:
+    _IMPORT_ERROR = None
 
 
-def _get_voice_id() -> str:
-    voice_id = get_elevenlabs_voice_id()
-    if not voice_id:
+_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+_tts = None
+_tts_lock = threading.Lock()
+_speak_lock = threading.Lock()
+
+
+def _project_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _resolve_path(path: str) -> str:
+    if os.path.isabs(path):
+        return path
+    return os.path.join(_project_dir(), path)
+
+
+def _get_device() -> str:
+    settings = load_settings()
+    requested = str(settings.get("xtts_device", "cpu")).strip().lower()
+    if requested == "cuda":
+        if torch is not None and torch.cuda.is_available():
+            return "cuda"
+        print("[XTTS] CUDA недоступна, использую CPU.")
+    return "cpu"
+
+
+def _get_speaker_wavs() -> list[str]:
+    settings = load_settings()
+    raw = settings.get("xtts_speaker_wav", "resources/tts/jarvis_voice.wav")
+    paths = []
+    for item in str(raw).split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        path = _resolve_path(item)
+        if os.path.isfile(path):
+            paths.append(path)
+        else:
+            print(f"[XTTS] WAV-образец не найден: {path}")
+    return paths
+
+
+def _get_model():
+    global _tts
+    if TTS is None:
         raise RuntimeError(
-            "Не задан ELEVENLABS_VOICE_ID. "
-            "Выбери голос ElevenLabs и укажи его ID."
-        )
-    return voice_id
+            "Coqui TTS не установлен. Установи зависимости из requirements.txt."
+        ) from _IMPORT_ERROR
+
+    if _tts is None:
+        with _tts_lock:
+            if _tts is None:
+                device = _get_device()
+                print(f"[XTTS] Загружаю модель { _MODEL_NAME } на {device}...")
+                _tts = TTS(_MODEL_NAME).to(device)
+                print("[XTTS] Модель загружена.")
+    return _tts
 
 
-def _pcm_bytes_to_numpy(data: bytes, sample_rate: int = 44100) -> np.ndarray:
-    """Преобразует PCM S16LE из ElevenLabs в float32 для sounddevice."""
-    if not data:
-        return np.empty(0, dtype=np.float32)
-    audio = np.frombuffer(data, dtype=np.int16)
-    return audio.astype(np.float32) / 32768.0
+def is_configured() -> bool:
+    return bool(_get_speaker_wavs())
+
+
+def warmup() -> None:
+    """Загружает модель заранее, но ничего не озвучивает."""
+    if not is_configured():
+        return
+    _get_model()
 
 
 def speak(text: str) -> None:
-    """Генерирует и воспроизводит естественную речь ElevenLabs."""
+    """Генерирует и воспроизводит русский ответ голосом из reference WAV."""
     text = (text or "").strip()
     if not text:
         return
 
+    speaker_wavs = _get_speaker_wavs()
+    if not speaker_wavs:
+        raise RuntimeError(
+            "Не найден WAV-образец голоса для XTTS. "
+            "Положи reference WAV в resources/tts/jarvis_voice.wav "
+            "или укажи другой путь в настройках."
+        )
+
     settings = load_settings()
-    client = _get_client()
-    voice_id = _get_voice_id()
+    language = str(settings.get("xtts_language", "ru")).strip() or "ru"
+    split_sentences = bool(settings.get("xtts_split_sentences", True))
 
-    response = client.text_to_speech.convert(
-        voice_id=voice_id,
-        text=text,
-        model_id=settings.get("elevenlabs_model", "eleven_multilingual_v2"),
-        output_format="mp3_44100_128",
-        voice_settings=VoiceSettings(
-            stability=float(settings.get("elevenlabs_stability", 0.48)),
-            similarity_boost=float(settings.get("elevenlabs_similarity", 0.82)),
-            style=float(settings.get("elevenlabs_style", 0.12)),
-            use_speaker_boost=bool(settings.get("elevenlabs_speaker_boost", True)),
-            speed=float(settings.get("elevenlabs_speed", 0.96)),
-        ),
-    )
+    # Один lock не даёт двум потокам одновременно обращаться к XTTS и
+    # не позволяет новому аудио остановить ещё не закончившееся.
+    with _speak_lock:
+        tts = _get_model()
+        audio = tts.tts(
+            text=text,
+            speaker_wav=speaker_wavs,
+            language=language,
+            split_sentences=split_sentences,
+        )
 
-    # SDK может вернуть bytes или итерируемый поток bytes.
-    if isinstance(response, (bytes, bytearray)):
-        audio_bytes = bytes(response)
-    else:
-        audio_bytes = b"".join(chunk for chunk in response if chunk)
+        audio_np = np.asarray(audio, dtype=np.float32)
+        if audio_np.size == 0:
+            raise RuntimeError("XTTS вернул пустой аудиопоток.")
 
-    audio = _pcm_bytes_to_numpy(audio_bytes, 44100)
-    if audio.size == 0:
-        raise RuntimeError("ElevenLabs вернул пустой аудиопоток.")
+        # XTTS выдаёт 24 кГц. Небольшая тишина по краям предотвращает
+        # субъективное "срезание" первых/последних миллисекунд на некоторых
+        # Windows/PortAudio устройствах.
+        padding_ms = int(settings.get("xtts_playback_padding_ms", 80))
+        padding = np.zeros(max(0, int(24000 * padding_ms / 1000)), dtype=np.float32)
+        audio_np = np.concatenate((padding, audio_np, padding))
 
-    sd.play(audio, samplerate=44100)
-    sd.wait()
-
-
-def is_configured() -> bool:
-    return bool(get_elevenlabs_api_key() and get_elevenlabs_voice_id())
+        sd.play(audio_np, samplerate=24000)
+        sd.wait()
