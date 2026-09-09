@@ -7,16 +7,17 @@ SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 DEFAULT_SETTINGS = {
     # --- Groq ---
     "groq_api_key": "",
-    "groq_model": "llama-3.3-70b-versatile",
+    "groq_model": "openai/gpt-oss-120b",
 
-    # --- ElevenLabs TTS ---
-    "elevenlabs_model": "eleven_multilingual_v2",
-    "elevenlabs_voice_id": "",
-    "elevenlabs_stability": 0.48,
-    "elevenlabs_similarity": 0.82,
-    "elevenlabs_style": 0.12,
-    "elevenlabs_speed": 0.96,
-    "elevenlabs_speaker_boost": True,
+    # --- Coqui XTTS-v2 ---
+    # Путь к одному или нескольким WAV через ';'.
+    "xtts_speaker_wav": "resources/tts/jarvis_voice.wav",
+    "xtts_language": "ru",
+    # Для GT 1030 безопаснее начать с CPU. Если CUDA работает стабильно,
+    # можно поменять на "cuda".
+    "xtts_device": "cpu",
+    "xtts_split_sentences": True,
+    "xtts_playback_padding_ms": 80,
 
     # --- Wake Word ---
     "wake_word_enabled": True,
@@ -82,16 +83,3 @@ def delete_groq_api_key(settings: dict | None = None) -> dict:
     использоваться — удалить его этой функцией невозможно намеренно.
     """
     return set_groq_api_key("", settings)
-
-
-def get_elevenlabs_api_key() -> str:
-    """Возвращает секрет ElevenLabs только из переменной окружения."""
-    return os.environ.get("ELEVENLABS_API_KEY", "").strip()
-
-
-def get_elevenlabs_voice_id(settings: dict | None = None) -> str:
-    env_voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
-    if env_voice:
-        return env_voice
-    settings = settings or load_settings()
-    return (settings.get("elevenlabs_voice_id") or "").strip()
