@@ -1,0 +1,17 @@
+{
+  "id": "youtube_search",
+  "type": "search",
+  "engine": "youtube",
+  "description": "Найти видео на YouTube по запросу",
+  "phrases": [
+    "найди на ютубе",
+    "поищи на ютубе",
+    "найди на youtube",
+    "поищи на youtube"
+  ],
+  "slots": ["query"],
+  "threshold": 0.72,
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}

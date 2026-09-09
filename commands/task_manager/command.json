@@ -1,0 +1,13 @@
+{
+  "id": "open_task_manager",
+  "type": "app",
+  "description": "Открыть Диспетчер задач Windows",
+  "executable": "taskmgr.exe",
+  "phrases": [
+    "открой диспетчер задач",
+    "запусти диспетчер задач",
+    "открыть диспетчер задач",
+    "запустить диспетчер задач"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

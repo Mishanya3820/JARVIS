@@ -1,0 +1,12 @@
+{
+  "id": "open_documents",
+  "type": "path",
+  "description": "Открыть папку Документы",
+  "path": "%USERPROFILE%\\Documents",
+  "phrases": [
+    "открой документы",
+    "открой папку документы",
+    "запусти документы"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

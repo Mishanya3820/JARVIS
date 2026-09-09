@@ -1,0 +1,13 @@
+{
+  "id": "open_explorer",
+  "type": "app",
+  "description": "Открыть Проводник Windows",
+  "executable": "explorer.exe",
+  "phrases": [
+    "открой проводник",
+    "запусти проводник",
+    "открыть проводник",
+    "запустить проводник"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

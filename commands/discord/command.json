@@ -1,0 +1,18 @@
+{
+  "id": "open_discord",
+  "type": "app",
+  "description": "Открыть Discord",
+  "uri": "discord://",
+  "fallback_url": "https://discord.com/app",
+  "missing_message": "Discord не установлен. Открыл Discord в браузере.",
+  "success_message": "Discord открыт.",
+  "phrases": [
+    "открой дискорд",
+    "запусти дискорд",
+    "открыть дискорд",
+    "запустить дискорд"
+  ],
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}
