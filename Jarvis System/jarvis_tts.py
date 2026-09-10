@@ -1,18 +1,11 @@
-"""Локальный TTS JARVIS на базе Coqui XTTS-v2.
-
-XTTS-v2 работает полностью локально после загрузки модели и умеет
-клонировать голос по одному или нескольким WAV-файлам.
-"""
+"""Локальный TTS JARVIS на базе Coqui XTTS-v2."""
 from __future__ import annotations
 
 import os
 import threading
 
-# ВАЖНО: путь TTS_HOME должен быть задан ДО импорта TTS.api.
-from jarvis_paths import TTS_MODELS_DIR, _resolve_path if False else PROJECT_DIR  # noqa: F401
-
-# Импортируем setup_environment повторно безопасно: модуль уже выполнил его.
-from jarvis_paths import setup_environment
+# TTS_HOME должен быть задан до импорта TTS.api.
+from jarvis_paths import PROJECT_DIR, TTS_MODELS_DIR, setup_environment
 
 setup_environment()
 os.environ["TTS_HOME"] = str(TTS_MODELS_DIR)
@@ -76,7 +69,7 @@ def _get_speaker_wavs() -> list[str]:
 
 
 def model_directory() -> str:
-    """Показывает пользователю, куда JARVIS хранит модели TTS."""
+    """Возвращает каталог, в котором JARVIS хранит модели XTTS."""
     return str(TTS_MODELS_DIR)
 
 
