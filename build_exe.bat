@@ -42,8 +42,11 @@ if errorlevel 1 (
 echo.
 echo [3/3] Copying external JARVIS resources...
 if exist "resources" xcopy "resources" "dist\JARVIS\resources\" /E /I /Y /Q >nul
-if exist "settings.json" copy /Y "settings.json" "dist\JARVIS\settings.json" >nul
+if exist "Jarvis System\settings.json" copy /Y "Jarvis System\settings.json" "dist\JARVIS\Jarvis System\settings.json" >nul
 if not exist "dist\JARVIS\Models\TTS" mkdir "dist\JARVIS\Models\TTS"
+if not exist "dist\JARVIS\Jarvis System" mkdir "dist\JARVIS\Jarvis System"
+if exist "Jarvis System\settings.json" copy /Y "Jarvis System\settings.json" "dist\JARVIS\Jarvis System\settings.json" >nul
+
 
 echo.
 echo ========================================
