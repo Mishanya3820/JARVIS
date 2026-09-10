@@ -8,6 +8,15 @@ from __future__ import annotations
 import os
 import threading
 
+# ВАЖНО: путь TTS_HOME должен быть задан ДО импорта TTS.api.
+from jarvis_paths import TTS_MODELS_DIR, _resolve_path if False else PROJECT_DIR  # noqa: F401
+
+# Импортируем setup_environment повторно безопасно: модуль уже выполнил его.
+from jarvis_paths import setup_environment
+
+setup_environment()
+os.environ["TTS_HOME"] = str(TTS_MODELS_DIR)
+
 import numpy as np
 import sounddevice as sd
 
@@ -31,7 +40,7 @@ _speak_lock = threading.Lock()
 
 
 def _project_dir() -> str:
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return str(PROJECT_DIR)
 
 
 def _resolve_path(path: str) -> str:
@@ -66,18 +75,24 @@ def _get_speaker_wavs() -> list[str]:
     return paths
 
 
+def model_directory() -> str:
+    """Показывает пользователю, куда JARVIS хранит модели TTS."""
+    return str(TTS_MODELS_DIR)
+
+
 def _get_model():
     global _tts
     if TTS is None:
         raise RuntimeError(
-            "Coqui TTS не установлен. Установи зависимости из requirements.txt."
+            "Библиотека TTS не установлена. Установи зависимости из requirements.txt."
         ) from _IMPORT_ERROR
 
     if _tts is None:
         with _tts_lock:
             if _tts is None:
                 device = _get_device()
-                print(f"[XTTS] Загружаю модель { _MODEL_NAME } на {device}...")
+                print(f"[XTTS] Каталог моделей: {TTS_MODELS_DIR}")
+                print(f"[XTTS] Загружаю модель {_MODEL_NAME} на {device}...")
                 _tts = TTS(_MODEL_NAME).to(device)
                 print("[XTTS] Модель загружена.")
     return _tts
@@ -112,8 +127,6 @@ def speak(text: str) -> None:
     language = str(settings.get("xtts_language", "ru")).strip() or "ru"
     split_sentences = bool(settings.get("xtts_split_sentences", True))
 
-    # Один lock не даёт двум потокам одновременно обращаться к XTTS и
-    # не позволяет новому аудио остановить ещё не закончившееся.
     with _speak_lock:
         tts = _get_model()
         audio = tts.tts(
@@ -127,9 +140,6 @@ def speak(text: str) -> None:
         if audio_np.size == 0:
             raise RuntimeError("XTTS вернул пустой аудиопоток.")
 
-        # XTTS выдаёт 24 кГц. Небольшая тишина по краям предотвращает
-        # субъективное "срезание" первых/последних миллисекунд на некоторых
-        # Windows/PortAudio устройствах.
         padding_ms = int(settings.get("xtts_playback_padding_ms", 80))
         padding = np.zeros(max(0, int(24000 * padding_ms / 1000)), dtype=np.float32)
         audio_np = np.concatenate((padding, audio_np, padding))
