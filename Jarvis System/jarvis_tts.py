@@ -15,21 +15,14 @@ import sounddevice as sd
 
 from jarvis_settings import load_settings
 
-try:
-    import torch
-    from TTS.api import TTS
-except ImportError as exc:  # pragma: no cover - зависит от окружения
-    torch = None
-    TTS = None
-    _IMPORT_ERROR = exc
-else:
-    _IMPORT_ERROR = None
-
-
-_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 _tts = None
 _tts_lock = threading.Lock()
 _speak_lock = threading.Lock()
+_IMPORT_ERROR = None
+_torch = None
+_TTS_CLASS = None
+
+_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 
 def _project_dir() -> str:
@@ -43,10 +36,14 @@ def _resolve_path(path: str) -> str:
 
 
 def _get_device() -> str:
+    global _torch
     settings = load_settings()
     requested = str(settings.get("xtts_device", "cpu")).strip().lower()
     if requested == "cuda":
-        if torch is not None and torch.cuda.is_available():
+        if _torch is None:
+            import torch as torch_module
+            _torch = torch_module
+        if _torch.cuda.is_available():
             return "cuda"
         print("[XTTS] CUDA недоступна, использую CPU.")
     return "cpu"
@@ -74,19 +71,26 @@ def model_directory() -> str:
 
 
 def _get_model():
-    global _tts
-    if TTS is None:
-        raise RuntimeError(
-            "Библиотека TTS не установлена. Установи зависимости из requirements.txt."
-        ) from _IMPORT_ERROR
+    global _tts, _TTS_CLASS, _IMPORT_ERROR, _torch
 
     if _tts is None:
         with _tts_lock:
             if _tts is None:
+                try:
+                    import torch as torch_module
+                    from TTS.api import TTS as TTSClass
+                    _torch = torch_module
+                    _TTS_CLASS = TTSClass
+                except ImportError as exc:
+                    _IMPORT_ERROR = exc
+                    raise RuntimeError(
+                        "Библиотека TTS не установлена. Установи зависимости из requirements.txt."
+                    ) from exc
+
                 device = _get_device()
                 print(f"[XTTS] Каталог моделей: {TTS_MODELS_DIR}")
                 print(f"[XTTS] Загружаю модель {_MODEL_NAME} на {device}...")
-                _tts = TTS(_MODEL_NAME).to(device)
+                _tts = _TTS_CLASS(_MODEL_NAME).to(device)
                 print("[XTTS] Модель загружена.")
     return _tts
 
