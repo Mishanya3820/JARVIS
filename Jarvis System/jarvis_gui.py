@@ -309,24 +309,34 @@ class JarvisApp(ctk.CTk):
         self.language_entry.insert(0, self.settings.get("xtts_language", "ru"))
         self.language_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(4, 0))
 
-        self._label(scroll, "Пауза по краям WAV (мс)")
-        self.padding_slider = ctk.CTkSlider(scroll, from_=0, to=200, number_of_steps=40)
-        self.padding_slider.set(self.settings.get("xtts_playback_padding_ms", 80))
-        self.padding_slider.pack(fill="x", padx=4, pady=(0, 8))
-        self.split_var = tk.BooleanVar(value=self.settings.get("xtts_split_sentences", True))
-        ctk.CTkCheckBox(
-            scroll, text="Разбивать длинный текст на предложения", variable=self.split_var
-        ).pack(anchor="w", padx=4, pady=(0, 8))
+        ctk.CTkLabel(
+            scroll, text="Поля XTTS используются при следующем синтезе.",
+            text_color=MUTED
+        ).pack(anchor="w", padx=4, pady=(0, 12))
 
-        self._section(scroll, "ГОЛОСОВОЙ ИНТЕРФЕЙС")
-        self.wake_word_var = tk.BooleanVar(value=self.settings.get("wake_word_enabled", True))
+        self._label(scroll, "Пауза до/после речи (мс)")
+        self.padding_slider = ctk.CTkSlider(scroll, from_=0, to=250, number_of_steps=25)
+        self.padding_slider.set(float(self.settings.get("xtts_playback_padding_ms", 80)))
+        self.padding_slider.pack(fill="x", padx=4, pady=(0, 12))
+
+        self.split_var = tk.BooleanVar(value=bool(self.settings.get("xtts_split_sentences", True)))
         ctk.CTkCheckBox(
-            scroll, text='Реагировать на «Джарвис» без кнопки', variable=self.wake_word_var
+            scroll, text="Разбивать длинные ответы на предложения",
+            variable=self.split_var
         ).pack(anchor="w", padx=4, pady=(0, 18))
-        ctk.CTkButton(
-            scroll, text="Сохранить настройки", height=42,
-            command=self.on_save_settings
-        ).pack(fill="x", padx=4, pady=(0, 8))
+
+        self._section(scroll, "WAKE WORD")
+        self.wake_word_var = tk.BooleanVar(value=bool(self.settings.get("wake_word_enabled", True)))
+        ctk.CTkCheckBox(
+            scroll, text="Включить wake word «Джарвис»",
+            variable=self.wake_word_var
+        ).pack(anchor="w", padx=4, pady=(0, 10))
+        ctk.CTkLabel(
+            scroll,
+            text="Порог и устройство Rustpotter сейчас задаются в settings.json.",
+            text_color=MUTED
+        ).pack(anchor="w", padx=4, pady=(0, 18))
+
         self.settings_status_label = ctk.CTkLabel(scroll, text="", text_color=GOOD)
         self.settings_status_label.pack(pady=(0, 16))
 
@@ -672,3 +682,8 @@ class JarvisApp(ctk.CTk):
     def on_close(self):
         self._stop_wake_word()
         self.destroy()
+
+
+if __name__ == "__main__":
+    app = JarvisApp()
+    app.mainloop()
