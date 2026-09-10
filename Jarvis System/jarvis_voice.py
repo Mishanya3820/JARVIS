@@ -7,25 +7,23 @@ import wave
 
 import numpy as np
 import sounddevice as sd
-import torch
-from silero_vad import load_silero_vad, VADIterator
-from vosk import Model, KaldiRecognizer
+
+from jarvis_paths import PROJECT_DIR, RESOURCES_DIR
 
 SAMPLE_RATE = 16000
 VAD_THRESHOLD = 0.5
 PLAYBACK_PADDING_MS = 80
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(BASE_DIR)
-RESOURCES_DIR = os.path.join(PROJECT_DIR, "resources", "sound", "jarvis-og", "ru")
-VOSK_MODEL_PATH = os.path.join(PROJECT_DIR, "resources", "vosk", "vosk-model-small-ru-0.22")
+RESOURCES_DIR = str(RESOURCES_DIR)
+VOSK_MODEL_PATH = os.path.join(RESOURCES_DIR, "vosk", "vosk-model-small-ru-0.22")
+SOUND_DIR = os.path.join(RESOURCES_DIR, "sound", "jarvis-og", "ru")
 
-SOUND_RUN = os.path.join(RESOURCES_DIR, "run.wav")
-SOUND_OFF = os.path.join(RESOURCES_DIR, "off.wav")
-SOUND_THANKS = os.path.join(RESOURCES_DIR, "thanks.wav")
-SOUND_NOT_FOUND = os.path.join(RESOURCES_DIR, "not_found.wav")
-SOUND_OK = [os.path.join(RESOURCES_DIR, f"ok{i}.wav") for i in range(1, 5)]
-SOUND_REPLY = [os.path.join(RESOURCES_DIR, f"reply{i}.wav") for i in range(1, 4)]
+SOUND_RUN = os.path.join(SOUND_DIR, "run.wav")
+SOUND_OFF = os.path.join(SOUND_DIR, "off.wav")
+SOUND_THANKS = os.path.join(SOUND_DIR, "thanks.wav")
+SOUND_NOT_FOUND = os.path.join(SOUND_DIR, "not_found.wav")
+SOUND_OK = [os.path.join(SOUND_DIR, f"ok{i}.wav") for i in range(1, 5)]
+SOUND_REPLY = [os.path.join(SOUND_DIR, f"reply{i}.wav") for i in range(1, 4)]
 
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
@@ -37,6 +35,7 @@ _playback_lock = threading.Lock()
 def get_vosk_model():
     global _vosk_model
     if _vosk_model is None:
+        from vosk import Model
         print(f"Загружаю Vosk STT: {VOSK_MODEL_PATH}")
         if not os.path.isdir(VOSK_MODEL_PATH):
             raise FileNotFoundError(
@@ -50,6 +49,7 @@ def get_vosk_model():
 def get_vad_model():
     global _vad_model
     if _vad_model is None:
+        from silero_vad import load_silero_vad
         print("Загружаю Silero VAD...")
         _vad_model = load_silero_vad()
     return _vad_model
@@ -139,6 +139,10 @@ def record_and_transcribe(
     silence_duration: float = 0.65,
     pre_speech_timeout: float = 5.0,
 ) -> dict:
+    from vosk import KaldiRecognizer
+    import torch
+    from silero_vad import VADIterator
+
     recognizer = KaldiRecognizer(get_vosk_model(), SAMPLE_RATE)
     recognizer.SetWords(False)
 
