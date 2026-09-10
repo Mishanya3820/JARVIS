@@ -1,12 +1,19 @@
 # PyInstaller spec for the local JARVIS GUI.
-# Models and resources stay outside the executable so they can live beside it.
-from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, collect_dynamic_libs
+# Heavy ML models stay outside the executable in the JARVIS folder.
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 
-# Several TTS dependencies (notably trainer) contain package-level files
-# such as VERSION that are read directly from disk at import time.
-# collect_all() keeps Python modules and non-Python package data files.
-packages = ["vosk", "TTS", "trainer"]
+# These packages contain runtime-loaded modules and/or non-Python data files.
+# collect_all() is intentionally used for the ML/audio stack to avoid the
+# "works from Python, fails from EXE" class of packaging errors.
+packages = [
+    "vosk",
+    "TTS",
+    "trainer",
+    "silero_vad",
+    "sounddevice",
+    "customtkinter",
+]
 
 hiddenimports = []
 datas = []
@@ -18,10 +25,19 @@ for package in packages:
     binaries += package_binaries
     hiddenimports += package_hiddenimports
 
+# Some TTS/VAD modules are imported dynamically.
+hiddenimports += collect_submodules("TTS")
+hiddenimports += collect_submodules("silero_vad")
 hiddenimports += collect_submodules("customtkinter")
-hiddenimports += ["sounddevice"]
-datas += collect_data_files("customtkinter")
-binaries += collect_dynamic_libs("TTS")
+
+# Remove duplicate entries while preserving order.
+def unique(items):
+    return list(dict.fromkeys(items))
+
+
+datas = unique(datas)
+binaries = unique(binaries)
+hiddenimports = unique(hiddenimports)
 
 
 a = Analysis(
