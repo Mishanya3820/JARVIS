@@ -1,18 +1,30 @@
 # PyInstaller spec for the local JARVIS GUI.
 # Models and resources stay outside the executable so they can live beside it.
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules, collect_dynamic_libs
 
+
+# Vosk's Windows package explicitly calls os.add_dll_directory() on its
+# own package directory during import. collect_all() keeps the package
+# directory together with its DLLs, data and hidden imports so that the
+# directory exists inside the PyInstaller runtime bundle.
+vosk_datas, vosk_binaries, vosk_hiddenimports = collect_all("vosk")
+
+tts_datas, tts_binaries, tts_hiddenimports = collect_all("TTS")
 
 hiddenimports = []
-hiddenimports += collect_submodules("TTS")
+hiddenimports += vosk_hiddenimports
+hiddenimports += tts_hiddenimports
 hiddenimports += collect_submodules("customtkinter")
 hiddenimports += ["sounddevice"]
 
 datas = []
-datas += collect_data_files("TTS")
+datas += vosk_datas
+datas += tts_datas
 datas += collect_data_files("customtkinter")
 
 binaries = []
+binaries += vosk_binaries
+binaries += tts_binaries
 binaries += collect_dynamic_libs("TTS")
 
 
