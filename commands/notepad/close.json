@@ -1,0 +1,14 @@
+{
+  "id": "close_notepad",
+  "type": "close_app",
+  "description": "Закрыть Блокнот",
+  "display_name": "Блокнот",
+  "process_names": ["notepad.exe"],
+  "phrases": [
+    "закрой блокнот",
+    "закрыть блокнот",
+    "выключи блокнот",
+    "выключить блокнот"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

@@ -1,0 +1,14 @@
+{
+  "id": "close_steam",
+  "type": "close_app",
+  "description": "Закрыть Steam",
+  "display_name": "Steam",
+  "process_names": ["steam.exe"],
+  "phrases": [
+    "закрой стим",
+    "закрыть стим",
+    "выключи стим",
+    "выключить стим"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

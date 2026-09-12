@@ -11,11 +11,24 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
  
+import psutil
+ 
 from jarvis_intent import IntentResult, classify
  
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 COMMANDS_DIR = os.path.join(PROJECT_DIR, "commands")
+ 
+# Запускаем дочерние GUI-процессы без наследования консоли JARVIS —
+# иначе диагностические сообщения Electron-приложений (Discord и т.п.)
+# утекают прямо в консоль JARVIS.
+_POPEN_KWARGS: dict[str, Any] = {
+    "stdout": subprocess.DEVNULL,
+    "stderr": subprocess.DEVNULL,
+    "stdin": subprocess.DEVNULL,
+}
+if os.name == "nt":
+    _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
  
  
 @dataclass
@@ -35,16 +48,17 @@ class CommandManager:
         if not os.path.isdir(self.commands_dir):
             return
         for root, _, files in os.walk(self.commands_dir):
-            if "command.json" not in files:
-                continue
-            path = os.path.join(root, "command.json")
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if data.get("id") and data.get("phrases"):
-                    self.commands.append(data)
-            except (OSError, json.JSONDecodeError) as e:
-                print(f"[Commands] Не удалось загрузить {path}: {e}")
+            for filename in files:
+                if not filename.endswith(".json"):
+                    continue
+                path = os.path.join(root, filename)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data.get("id") and data.get("phrases"):
+                        self.commands.append(data)
+                except (OSError, json.JSONDecodeError) as e:
+                    print(f"[Commands] Не удалось загрузить {path}: {e}")
  
     def match(self, text: str) -> CommandMatch | None:
         result = classify(text, self.commands)
@@ -83,6 +97,70 @@ class CommandManager:
             return os.path.isfile(executable)
         return shutil.which(executable) is not None
  
+    @staticmethod
+    def _find_processes(process_names: list[str]) -> list[psutil.Process]:
+        """Ищет запущенные процессы по списку возможных имён (без учёта
+        регистра) — некоторые приложения запускаются под разными именами
+        exe в зависимости от версии (например, современный Калькулятор
+        Windows — CalculatorApp.exe, а не calc.exe)."""
+        wanted = {name.lower() for name in process_names}
+        found = []
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                if name in wanted:
+                    found.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return found
+ 
+    def _close_processes(self, process_names: list[str], display_name: str) -> dict[str, Any]:
+        processes = self._find_processes(process_names)
+        if not processes:
+            return {"ok": False, "message": f"{display_name} не запущен(а)."}
+ 
+        closed, denied = [], []
+        for proc in processes:
+            try:
+                proc.terminate()
+            except psutil.AccessDenied:
+                denied.append(proc)
+            except psutil.NoSuchProcess:
+                continue
+ 
+        # Даём процессам немного времени на штатное завершение, и только
+        # тем, кто не закрылся сам, посылаем принудительное завершение.
+        gone, alive = psutil.wait_procs(
+            [p for p in processes if p not in denied], timeout=3
+        )
+        closed.extend(gone)
+        for proc in alive:
+            try:
+                proc.kill()
+                closed.append(proc)
+            except psutil.AccessDenied:
+                denied.append(proc)
+            except psutil.NoSuchProcess:
+                continue
+ 
+        if denied and not closed:
+            return {
+                "ok": False,
+                "message": (
+                    f"Не могу закрыть {display_name.lower()} — недостаточно прав. "
+                    "Обычно так бывает, если приложение запущено с правами "
+                    "администратора или как защищённое системой приложение "
+                    "(например, из Microsoft Store) — Джарвису для этого "
+                    "тоже нужны повышенные права."
+                ),
+            }
+        if denied:
+            return {
+                "ok": True,
+                "message": f"{display_name} закрыт(а) частично — часть процессов не поддалась (недостаточно прав).",
+            }
+        return {"ok": True, "message": f"{display_name} закрыт(а)."}
+ 
     def execute(self, match: CommandMatch) -> dict[str, Any]:
         command = match.command
         command_type = command.get("type", "python")
@@ -90,11 +168,23 @@ class CommandManager:
  
         try:
             if command_type == "notepad":
-                subprocess.Popen(["notepad.exe"])
+                subprocess.Popen(["notepad.exe"], **_POPEN_KWARGS)
                 message = "Блокнот успешно открыт."
             elif command_type == "calculator":
-                subprocess.Popen(["calc.exe"])
+                subprocess.Popen(["calc.exe"], **_POPEN_KWARGS)
                 message = "Калькулятор успешно открыт."
+            elif command_type == "close_app":
+                process_names = command.get("process_names", [])
+                if not process_names:
+                    return {"ok": False, "message": "Не указаны имена процессов для закрытия."}
+                display_name = command.get("display_name", command.get("id", "Приложение"))
+                result = self._close_processes(process_names, display_name)
+                return {
+                    "ok": result["ok"],
+                    "command_id": command.get("id"),
+                    "confidence": match.result.confidence,
+                    "message": result["message"],
+                }
             elif command_type == "app":
                 uri = command.get("uri")
                 executable = command.get("executable", "")
@@ -140,7 +230,10 @@ class CommandManager:
                             }
                     else:
                         args = command.get("args")
-                        subprocess.Popen(args if isinstance(args, list) and args else [executable])
+                        subprocess.Popen(
+                            args if isinstance(args, list) and args else [executable],
+                            **_POPEN_KWARGS,
+                        )
                         message = command.get("success_message", "Приложение открыто.")
                 else:
                     return {"ok": False, "message": "Не указано приложение."}
@@ -174,7 +267,7 @@ class CommandManager:
                 cmd = command.get("command", "")
                 if not cmd:
                     return {"ok": False, "message": "Пустая команда."}
-                subprocess.Popen(cmd, shell=True)
+                subprocess.Popen(cmd, shell=True, **_POPEN_KWARGS)
                 message = "Команда запущена."
             else:
                 return {"ok": False, "message": f"Неизвестный тип команды: {command_type}"}

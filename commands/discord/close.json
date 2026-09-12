@@ -1,0 +1,14 @@
+{
+  "id": "close_discord",
+  "type": "close_app",
+  "description": "Закрыть Discord",
+  "display_name": "Discord",
+  "process_names": ["Discord.exe"],
+  "phrases": [
+    "закрой дискорд",
+    "закрыть дискорд",
+    "выключи дискорд",
+    "выключить дискорд"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
