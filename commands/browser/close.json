@@ -1,0 +1,15 @@
+{
+  "id": "close_browser",
+  "type": "close_app",
+  "description": "Закрыть браузер",
+  "display_name": "Браузер",
+  "process_names": ["chrome.exe", "msedge.exe", "firefox.exe", "opera.exe", "brave.exe", "iexplore.exe"],
+  "phrases": [
+    "закрой браузер",
+    "закрыть браузер",
+    "выключи браузер",
+    "выключить браузер",
+    "останови браузер"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

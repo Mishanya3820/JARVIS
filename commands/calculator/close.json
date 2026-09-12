@@ -1,0 +1,14 @@
+{
+  "id": "close_calculator",
+  "type": "close_app",
+  "description": "Закрыть калькулятор",
+  "display_name": "Калькулятор",
+  "process_names": ["CalculatorApp.exe", "Calculator.exe", "calc.exe"],
+  "phrases": [
+    "закрой калькулятор",
+    "закрыть калькулятор",
+    "выключи калькулятор",
+    "выключить калькулятор"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}

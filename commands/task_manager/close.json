@@ -1,0 +1,13 @@
+{
+  "id": "close_task_manager",
+  "type": "close_app",
+  "description": "Закрыть Диспетчер задач",
+  "display_name": "Диспетчер задач",
+  "process_names": ["taskmgr.exe"],
+  "phrases": [
+    "закрой диспетчер задач",
+    "закрыть диспетчер задач",
+    "выключи диспетчер задач"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
