@@ -53,16 +53,37 @@ class RustpotterWakeWordDetector:
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop Rustpotter and make sure its microphone process is gone."""
         self._stop_event.set()
         process = self._process
-        if process:
+
+        if process is not None:
             try:
-                process.terminate()
-            except Exception:
-                pass
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=0.8)
+                    except subprocess.TimeoutExpired:
+                        # On Windows kill() is also backed by TerminateProcess,
+                        # but this second step protects us if terminate did not
+                        # finish the child quickly enough.
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                        try:
+                            process.wait(timeout=0.8)
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"[WakeWord/Rustpotter] Ошибка остановки процесса: {e}")
+
         thread = self._thread
         if thread and thread is not threading.current_thread():
             thread.join(timeout=2.0)
+
+        # Do not clear these references before the worker has had a chance to
+        # finish: _run() uses the process object in its finally block.
         self._thread = None
         self._process = None
 
@@ -93,7 +114,7 @@ class RustpotterWakeWordDetector:
 
         try:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            self._process = subprocess.Popen(
+            process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -101,14 +122,29 @@ class RustpotterWakeWordDetector:
                 bufsize=1,
                 creationflags=creationflags,
             )
+            self._process = process
         except Exception as e:
             print(f"[WakeWord/Rustpotter] Ошибка запуска: {e}")
+            return
+
+        # Important race-condition protection: the GUI may have been closed
+        # while this worker thread was still starting Rustpotter. In that case
+        # never leave a newly-created child process running in the background.
+        if self._stop_event.is_set():
+            try:
+                process.terminate()
+                process.wait(timeout=0.8)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
             return
 
         print("[WakeWord/Rustpotter] Слушаю в фоне...")
 
         try:
-            for line in iter(self._process.stdout.readline, ""):
+            for line in iter(process.stdout.readline, ""):
                 if self._stop_event.is_set():
                     break
 
@@ -133,11 +169,11 @@ class RustpotterWakeWordDetector:
                     print(f"[WakeWord/Rustpotter] Ошибка обработчика: {e}")
         finally:
             try:
-                self._process.stdout.close()
+                process.stdout.close()
             except Exception:
                 pass
             try:
-                self._process.wait(timeout=1)
+                process.wait(timeout=1)
             except Exception:
                 pass
 
