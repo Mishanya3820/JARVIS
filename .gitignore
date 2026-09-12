@@ -219,3 +219,6 @@ __marimo__/
 
 # Local models
 Models/
+
+# Rustpotter recordings
+resources/rustpotter/recordings/
