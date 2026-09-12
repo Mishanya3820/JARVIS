@@ -219,6 +219,7 @@ __marimo__/
 
 # Local models
 Models/
+resources/gigaam_v3/
 
 # Rustpotter recordings
 resources/rustpotter/recordings/

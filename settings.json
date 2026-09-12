@@ -10,6 +10,5 @@
   "rustpotter_cli_path": "resources/rustpotter/rustpotter-cli_win_x86_64.exe",
   "rustpotter_model_path": "resources/rustpotter/jarvis-ru.rpw",
   "rustpotter_device_index": 0,
-  "wake_word_threshold": 0.5,
-  "vosk_model_path": "resources/vosk/vosk-model-small-ru-0.22"
+  "wake_word_threshold": 0.5
 }

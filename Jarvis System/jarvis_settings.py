@@ -23,9 +23,6 @@ DEFAULT_SETTINGS = {
     "rustpotter_model_path": "resources/rustpotter/jarvis-ru.rpw",
     "rustpotter_device_index": 0,
     "wake_word_threshold": 0.5,
-
-    # --- Vosk STT ---
-    "vosk_model_path": "resources/vosk/vosk-model-small-ru-0.22",
 }
 
 

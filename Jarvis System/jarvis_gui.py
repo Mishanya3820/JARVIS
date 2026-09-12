@@ -85,7 +85,7 @@ class JarvisApp(ctk.CTk):
 
         self.component_labels = {}
         for key, title in (
-            ("vosk", "Vosk STT"),
+            ("gigaAM", "GigaAM STT"),
             ("wake", "Wake word"),
             ("local", "Local commands"),
             ("groq", "Groq"),
@@ -451,9 +451,9 @@ class JarvisApp(ctk.CTk):
 
     def _load_models_thread(self):
         try:
-            self.set_status("Загружаю Vosk...")
-            jarvis_voice.get_vosk_model()
-            self._set_component("vosk", True)
+            self.set_status("Загружаю GigaAM...")
+            jarvis_voice.get_gigaam_model()
+            self._set_component("gigaam", True)
             self.set_status("Проверяю сеть...")
             self._refresh_network_status()
             if is_online() and get_groq_api_key(self.settings):
@@ -478,7 +478,7 @@ class JarvisApp(ctk.CTk):
                 self._set_component("wake", False)
         except Exception as e:
             self.set_status(f"Ошибка загрузки: {e}")
-            self._set_component("vosk", False)
+            self._set_component("gigaam", False)
             print(f"[JARVIS] Ошибка запуска: {e}")
 
     def _set_component(self, key, ok):
