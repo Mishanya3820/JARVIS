@@ -6,6 +6,11 @@ from jarvis_paths import SETTINGS_FILE
 
 SETTINGS_PATH = str(SETTINGS_FILE)
 DEFAULT_SETTINGS = {
+    # --- Performance ---
+    # performance = максимальная скорость, balanced = баланс, economy = минимум ресурсов.
+    # Модели не выгружаются автоматически ни в одном режиме.
+    "performance_mode": "balanced",
+
     # --- Groq ---
     "groq_api_key": "",
     "groq_model": "openai/gpt-oss-120b",
@@ -34,6 +39,8 @@ def load_settings() -> dict:
                 loaded = json.load(f)
             settings = DEFAULT_SETTINGS.copy()
             settings.update(loaded)
+            if settings.get("performance_mode") not in {"performance", "balanced", "economy"}:
+                settings["performance_mode"] = "balanced"
             return settings
         except Exception:
             pass
