@@ -9,7 +9,7 @@ import jarvis_tts
 import jarvis_voice
 from jarvis_network import is_online
 from jarvis_paths import PROJECT_DIR
-from jarvis_settings import get_groq_api_key, load_settings, save_settings
+from jarvis_settings import get_elevenlabs_api_key, get_groq_api_key, load_settings, save_settings
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -30,6 +30,7 @@ PERFORMANCE_MODES = {
     "balanced": ("Сбалансированный", "Оптимальный баланс скорости и нагрузки. Рекомендуется."),
     "economy": ("Экономичный", "Минимальная нагрузка на CPU. Ответы могут обрабатываться медленнее."),
 }
+TTS_ENGINES = {"coqui": "Coqui XTTS-v2", "elevenlabs": "ElevenLabs"}
 
 
 class JarvisApp(ctk.CTk):
@@ -47,6 +48,7 @@ class JarvisApp(ctk.CTk):
         self.settings_dirty = False
         self._settings_tracking_ready = False
         self._groq_key_editing = False
+        self._eleven_key_editing = False
 
         self._build_ui()
         self._setup_settings_change_tracking()
@@ -76,7 +78,7 @@ class JarvisApp(ctk.CTk):
         ctk.CTkLabel(self.sidebar, text="СОСТОЯНИЕ СИСТЕМЫ", text_color=MUTED, font=ctk.CTkFont(size=10, weight="bold")).pack(anchor="w", padx=22, pady=(0, 10))
 
         self.component_labels = {}
-        for key, title in (("gigaAM", "GigaAM STT"), ("wake", "Wake word"), ("local", "Local commands"), ("groq", "Groq"), ("xtts", "XTTS-v2")):
+        for key, title in (("gigaAM", "GigaAM STT"), ("wake", "Wake word"), ("local", "Local commands"), ("groq", "Groq"), ("xtts", "TTS")):
             row = ctk.CTkFrame(self.sidebar, fg_color="transparent")
             row.pack(fill="x", padx=22, pady=3)
             ctk.CTkLabel(row, text=title, text_color=MUTED, anchor="w").pack(side="left", fill="x", expand=True)
@@ -180,24 +182,12 @@ class JarvisApp(ctk.CTk):
         mode_row = ctk.CTkFrame(scroll, fg_color="transparent")
         mode_row.pack(fill="x", padx=4, pady=(0, 6))
         self.performance_mode_var = tk.StringVar(value=self.settings.get("performance_mode", "balanced"))
-        self.performance_mode_menu = ctk.CTkOptionMenu(
-            mode_row,
-            variable=self.performance_mode_var,
-            values=list(PERFORMANCE_MODES.keys()),
-            command=self._on_performance_mode_changed,
-            width=210,
-        )
+        self.performance_mode_menu = ctk.CTkOptionMenu(mode_row, variable=self.performance_mode_var, values=list(PERFORMANCE_MODES.keys()), command=self._on_performance_mode_changed, width=210)
         self.performance_mode_menu.pack(side="left")
         self.performance_mode_label = ctk.CTkLabel(mode_row, text="", text_color=TEXT, anchor="w", justify="left")
         self.performance_mode_label.pack(side="left", fill="x", expand=True, padx=(12, 0))
         self._update_performance_mode_label()
-        ctk.CTkLabel(
-            scroll,
-            text="Модели не выгружаются автоматически. Режим влияет на количество CPU-потоков GigaAM и PyTorch. После изменения режима перезапустите JARVIS.",
-            text_color=MUTED,
-            justify="left",
-            wraplength=700,
-        ).pack(anchor="w", padx=4, pady=(0, 18))
+        ctk.CTkLabel(scroll, text="Модели не выгружаются автоматически. Режим влияет на количество CPU-потоков GigaAM и PyTorch. После изменения режима перезапустите JARVIS.", text_color=MUTED, justify="left", wraplength=700).pack(anchor="w", padx=4, pady=(0, 18))
 
         self._section(scroll, "ОНЛАЙН-ОТВЕТЫ")
         self._label(scroll, "API-ключ Groq")
@@ -213,8 +203,37 @@ class JarvisApp(ctk.CTk):
         self.model_entry = ctk.CTkEntry(scroll)
         self.model_entry.insert(0, self.settings["groq_model"])
         self.model_entry.pack(fill="x", padx=4, pady=(0, 18))
-        self._section(scroll, "ГОЛОС JARVIS — XTTS-V2")
-        ctk.CTkLabel(scroll, text="Модель скачивается автоматически при первом использовании и хранится в Models\\TTS.", text_color=MUTED, justify="left").pack(anchor="w", padx=4, pady=(0, 12))
+
+        self._section(scroll, "ГОЛОС JARVIS")
+        engine_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        engine_row.pack(fill="x", padx=4, pady=(0, 10))
+        ctk.CTkLabel(engine_row, text="Движок озвучки", text_color=MUTED).pack(side="left")
+        self.tts_engine_var = tk.StringVar(value=self.settings.get("tts_engine", "coqui"))
+        self.tts_engine_menu = ctk.CTkOptionMenu(engine_row, variable=self.tts_engine_var, values=["coqui", "elevenlabs"], command=self._on_tts_engine_changed, width=190)
+        self.tts_engine_menu.pack(side="right")
+        self.tts_engine_hint = ctk.CTkLabel(scroll, text="", text_color=MUTED, justify="left", wraplength=700)
+        self.tts_engine_hint.pack(anchor="w", padx=4, pady=(0, 10))
+
+        self._label(scroll, "ElevenLabs API-ключ")
+        eleven_key_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        eleven_key_frame.pack(fill="x", padx=4, pady=(0, 10))
+        self.eleven_key_entry = ctk.CTkEntry(eleven_key_frame, show="•", placeholder_text="Ключ ElevenLabs")
+        self.eleven_key_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.eleven_key_entry.bind("<FocusIn>", self._on_eleven_key_focus_in)
+        self.eleven_key_entry.bind("<FocusOut>", self._on_eleven_key_focus_out)
+        ctk.CTkButton(eleven_key_frame, text="Удалить", width=90, command=self._clear_eleven_key).pack(side="right")
+        self._refresh_eleven_key_field()
+        self._label(scroll, "ElevenLabs Voice ID")
+        self.eleven_voice_entry = ctk.CTkEntry(scroll, placeholder_text="Например: pNInz6obpgDQGcFmaJgB")
+        self.eleven_voice_entry.insert(0, self.settings.get("elevenlabs_voice_id", ""))
+        self.eleven_voice_entry.pack(fill="x", padx=4, pady=(0, 10))
+        self._label(scroll, "Модель ElevenLabs")
+        self.eleven_model_entry = ctk.CTkEntry(scroll)
+        self.eleven_model_entry.insert(0, self.settings.get("elevenlabs_model", "eleven_multilingual_v2"))
+        self.eleven_model_entry.pack(fill="x", padx=4, pady=(0, 18))
+
+        self._section(scroll, "COQUI XTTS-V2")
+        ctk.CTkLabel(scroll, text="Локальная модель. Reference WAV используется для клонирования голоса и хранится вне Git.", text_color=MUTED, justify="left").pack(anchor="w", padx=4, pady=(0, 12))
         self._label(scroll, "Reference WAV")
         self.voice_wav_entry = ctk.CTkEntry(scroll)
         self.voice_wav_entry.insert(0, self.settings.get("xtts_speaker_wav", "resources/tts/jarvis_voice.wav"))
@@ -238,6 +257,8 @@ class JarvisApp(ctk.CTk):
         self.padding_slider.pack(fill="x", padx=4, pady=(0, 12))
         self.split_var = tk.BooleanVar(value=bool(self.settings.get("xtts_split_sentences", True)))
         ctk.CTkCheckBox(scroll, text="Разбивать длинные ответы на предложения", variable=self.split_var).pack(anchor="w", padx=4, pady=(0, 18))
+        self._update_tts_engine_hint()
+
         self._section(scroll, "WAKE WORD")
         self.wake_word_var = tk.BooleanVar(value=bool(self.settings.get("wake_word_enabled", True)))
         ctk.CTkCheckBox(scroll, text="Включить wake word «Джарвис»", variable=self.wake_word_var).pack(anchor="w", padx=4, pady=(0, 10))
@@ -252,11 +273,13 @@ class JarvisApp(ctk.CTk):
         ctk.CTkLabel(parent, text=text, text_color=MUTED, anchor="w").pack(fill="x", padx=4, pady=(0, 4))
 
     def _setup_settings_change_tracking(self):
-        for entry in (self.model_entry, self.voice_wav_entry, self.language_entry):
+        for entry in (self.model_entry, self.voice_wav_entry, self.language_entry, self.eleven_voice_entry, self.eleven_model_entry):
             entry.bind("<KeyRelease>", lambda event: self._mark_settings_dirty(), add="+")
         self.groq_key_entry.bind("<KeyRelease>", lambda event: self._mark_settings_dirty(), add="+")
+        self.eleven_key_entry.bind("<KeyRelease>", lambda event: self._mark_settings_dirty(), add="+")
         self.device_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self.performance_mode_var.trace_add("write", lambda *_: self._mark_settings_dirty())
+        self.tts_engine_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self.padding_slider.configure(command=lambda value: self._mark_settings_dirty())
         self.split_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self.wake_word_var.trace_add("write", lambda *_: self._mark_settings_dirty())
@@ -273,6 +296,20 @@ class JarvisApp(ctk.CTk):
         mode = self.performance_mode_var.get()
         name, description = PERFORMANCE_MODES.get(mode, PERFORMANCE_MODES["balanced"])
         self.performance_mode_label.configure(text=f"{name} — {description}")
+
+    def _on_tts_engine_changed(self, _value=None):
+        self._update_tts_engine_hint()
+        self._mark_settings_dirty()
+        engine = self.tts_engine_var.get()
+        self._set_component("xtts", jarvis_tts.is_configured() if engine == jarvis_tts.get_engine() else False)
+
+    def _update_tts_engine_hint(self):
+        engine = self.tts_engine_var.get()
+        if engine == "elevenlabs":
+            text = "ElevenLabs — облачная озвучка высокого качества. Нужны API-ключ и Voice ID; расходуется лимит аккаунта ElevenLabs."
+        else:
+            text = "Coqui XTTS-v2 — локальная озвучка без API. Нужен reference WAV; модель хранится в Models\\TTS."
+        self.tts_engine_hint.configure(text=text)
 
     def _mark_settings_dirty(self):
         if not self._settings_tracking_ready:
@@ -300,6 +337,20 @@ class JarvisApp(ctk.CTk):
         else:
             self.groq_key_entry.configure(placeholder_text="Введите API-ключ")
 
+    def _refresh_eleven_key_field(self):
+        self._eleven_key_editing = False
+        self.eleven_key_entry.delete(0, "end")
+        local_key = (self.settings.get("elevenlabs_api_key") or "").strip()
+        env_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        if local_key:
+            self.eleven_key_entry.insert(0, "•" * max(8, len(local_key)))
+            self.eleven_key_entry.configure(placeholder_text="API-ключ сохранён")
+        elif env_key:
+            self.eleven_key_entry.insert(0, "•" * 16)
+            self.eleven_key_entry.configure(placeholder_text="Ключ задан через Windows")
+        else:
+            self.eleven_key_entry.configure(placeholder_text="Введите API-ключ")
+
     def _on_groq_key_focus_in(self, _event=None):
         if not self._groq_key_editing:
             self._groq_key_editing = True
@@ -310,11 +361,28 @@ class JarvisApp(ctk.CTk):
         if self._groq_key_editing and not self.groq_key_entry.get().strip():
             self._refresh_groq_key_field()
 
+    def _on_eleven_key_focus_in(self, _event=None):
+        if not self._eleven_key_editing:
+            self._eleven_key_editing = True
+            self.eleven_key_entry.delete(0, "end")
+            self.eleven_key_entry.configure(placeholder_text="Введите новый API-ключ")
+
+    def _on_eleven_key_focus_out(self, _event=None):
+        if self._eleven_key_editing and not self.eleven_key_entry.get().strip():
+            self._refresh_eleven_key_field()
+
     def _clear_groq_key(self):
         self._groq_key_editing = True
         self.groq_key_entry.delete(0, "end")
         self.groq_key_entry.configure(placeholder_text="Ключ будет удалён после сохранения")
         self.settings["groq_api_key"] = ""
+        self._mark_settings_dirty()
+
+    def _clear_eleven_key(self):
+        self._eleven_key_editing = True
+        self.eleven_key_entry.delete(0, "end")
+        self.eleven_key_entry.configure(placeholder_text="Ключ будет удалён после сохранения")
+        self.settings["elevenlabs_api_key"] = ""
         self._mark_settings_dirty()
 
     def _show_first_run_groq_setup(self):
@@ -539,6 +607,9 @@ class JarvisApp(ctk.CTk):
     def on_save_settings(self):
         self.settings["performance_mode"] = self.performance_mode_var.get()
         self.settings["groq_model"] = self.model_entry.get().strip() or self.settings["groq_model"]
+        self.settings["tts_engine"] = self.tts_engine_var.get()
+        self.settings["elevenlabs_voice_id"] = self.eleven_voice_entry.get().strip()
+        self.settings["elevenlabs_model"] = self.eleven_model_entry.get().strip() or "eleven_multilingual_v2"
         self.settings["xtts_speaker_wav"] = self.voice_wav_entry.get().strip()
         self.settings["xtts_device"] = self.device_var.get()
         self.settings["xtts_language"] = self.language_entry.get().strip() or "ru"
@@ -547,10 +618,13 @@ class JarvisApp(ctk.CTk):
         self.settings["wake_word_enabled"] = bool(self.wake_word_var.get())
         if self._groq_key_editing:
             self.settings["groq_api_key"] = self.groq_key_entry.get().strip().replace("•", "")
+        if self._eleven_key_editing:
+            self.settings["elevenlabs_api_key"] = self.eleven_key_entry.get().strip().replace("•", "")
         save_settings(self.settings)
         jarvis_core.set_groq_model(self.settings["groq_model"])
         jarvis_core.reset_groq_client()
         self._refresh_groq_key_field()
+        self._refresh_eleven_key_field()
         self._mark_settings_clean()
 
     def on_close(self):
