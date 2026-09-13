@@ -1,9 +1,4 @@
-"""Основное ядро JARVIS.
- 
-Маршрут обработки:
-    GigaAM -> local intent -> local command
-                         -> Groq, если локальная команда не найдена
-"""
+# Ядро JARVIS
  
 from __future__ import annotations
  

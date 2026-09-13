@@ -1,4 +1,3 @@
-"""Локальный TTS JARVIS на базе Coqui XTTS-v2 (пакет coqui-tts)."""
 from __future__ import annotations
  
 import os

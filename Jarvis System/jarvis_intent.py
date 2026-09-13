@@ -1,4 +1,3 @@
-"""Лёгкий локальный классификатор намерений JARVIS."""
 
 from __future__ import annotations
 

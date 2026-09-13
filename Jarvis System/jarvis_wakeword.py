@@ -1,9 +1,3 @@
-"""Rustpotter wake-word detector for JARVIS.
-
-Rustpotter CLI owns the microphone while listening for the wake word.
-After detection the GUI stops this process before starting Vosk, so both
-systems never try to capture the microphone at the same time.
-"""
 from __future__ import annotations
 
 import os

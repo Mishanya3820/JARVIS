@@ -1,4 +1,4 @@
-"""Загрузчик и исполнитель локальных команд JARVIS."""
+# Загрузчик и исполнитель локальных команд JARVIS.
  
 from __future__ import annotations
  
@@ -18,10 +18,7 @@ from jarvis_intent import IntentResult, classify
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 COMMANDS_DIR = os.path.join(PROJECT_DIR, "commands")
- 
-# Запускаем дочерние GUI-процессы без наследования консоли JARVIS —
-# иначе диагностические сообщения Electron-приложений (Discord и т.п.)
-# утекают прямо в консоль JARVIS.
+
 _POPEN_KWARGS: dict[str, Any] = {
     "stdout": subprocess.DEVNULL,
     "stderr": subprocess.DEVNULL,
