@@ -25,6 +25,12 @@ GOOD = "#55d187"
 WARN = "#ffd166"
 BAD = "#ff6b6b"
 
+PERFORMANCE_MODES = {
+    "performance": ("Производительный", "Максимальная скорость обработки. Использует больше CPU."),
+    "balanced": ("Сбалансированный", "Оптимальный баланс скорости и нагрузки. Рекомендуется."),
+    "economy": ("Экономичный", "Минимальная нагрузка на CPU. Ответы могут обрабатываться медленнее."),
+}
+
 
 class JarvisApp(ctk.CTk):
     def __init__(self):
@@ -77,6 +83,11 @@ class JarvisApp(ctk.CTk):
             dot = ctk.CTkLabel(row, text="●", text_color="#39414d", width=18)
             dot.pack(side="right")
             self.component_labels[key] = dot
+
+        mode_name = PERFORMANCE_MODES.get(self.settings.get("performance_mode", "balanced"), PERFORMANCE_MODES["balanced"])[0]
+        ctk.CTkLabel(self.sidebar, text="РЕЖИМ", text_color=MUTED, font=ctk.CTkFont(size=10, weight="bold")).pack(anchor="w", padx=22, pady=(18, 3))
+        self.mode_sidebar_label = ctk.CTkLabel(self.sidebar, text=mode_name, text_color=ACCENT, font=ctk.CTkFont(size=11, weight="bold"))
+        self.mode_sidebar_label.pack(anchor="w", padx=22)
 
         bottom = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         bottom.pack(side="bottom", fill="x", padx=22, pady=20)
@@ -164,6 +175,30 @@ class JarvisApp(ctk.CTk):
         ctk.CTkLabel(self.unsaved_banner, text="Есть несохранённые изменения", text_color=WARN, font=ctk.CTkFont(weight="bold")).pack(side="left", padx=12, pady=8)
         ctk.CTkButton(self.unsaved_banner, text="Сохранить", width=110, height=30, command=self.on_save_settings).pack(side="right", padx=8, pady=6)
         self.unsaved_banner.pack_forget()
+
+        self._section(scroll, "РЕЖИМ РАБОТЫ")
+        mode_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        mode_row.pack(fill="x", padx=4, pady=(0, 6))
+        self.performance_mode_var = tk.StringVar(value=self.settings.get("performance_mode", "balanced"))
+        self.performance_mode_menu = ctk.CTkOptionMenu(
+            mode_row,
+            variable=self.performance_mode_var,
+            values=list(PERFORMANCE_MODES.keys()),
+            command=self._on_performance_mode_changed,
+            width=210,
+        )
+        self.performance_mode_menu.pack(side="left")
+        self.performance_mode_label = ctk.CTkLabel(mode_row, text="", text_color=TEXT, anchor="w", justify="left")
+        self.performance_mode_label.pack(side="left", fill="x", expand=True, padx=(12, 0))
+        self._update_performance_mode_label()
+        ctk.CTkLabel(
+            scroll,
+            text="Модели не выгружаются автоматически. Режим влияет на количество CPU-потоков GigaAM и PyTorch. После изменения режима перезапустите JARVIS.",
+            text_color=MUTED,
+            justify="left",
+            wraplength=700,
+        ).pack(anchor="w", padx=4, pady=(0, 18))
+
         self._section(scroll, "ОНЛАЙН-ОТВЕТЫ")
         self._label(scroll, "API-ключ Groq")
         key_frame = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -221,10 +256,23 @@ class JarvisApp(ctk.CTk):
             entry.bind("<KeyRelease>", lambda event: self._mark_settings_dirty(), add="+")
         self.groq_key_entry.bind("<KeyRelease>", lambda event: self._mark_settings_dirty(), add="+")
         self.device_var.trace_add("write", lambda *_: self._mark_settings_dirty())
+        self.performance_mode_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self.padding_slider.configure(command=lambda value: self._mark_settings_dirty())
         self.split_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self.wake_word_var.trace_add("write", lambda *_: self._mark_settings_dirty())
         self._settings_tracking_ready = True
+
+    def _on_performance_mode_changed(self, _value=None):
+        self._update_performance_mode_label()
+        mode = self.performance_mode_var.get()
+        name = PERFORMANCE_MODES.get(mode, PERFORMANCE_MODES["balanced"])[0]
+        self.mode_sidebar_label.configure(text=name)
+        self._mark_settings_dirty()
+
+    def _update_performance_mode_label(self):
+        mode = self.performance_mode_var.get()
+        name, description = PERFORMANCE_MODES.get(mode, PERFORMANCE_MODES["balanced"])
+        self.performance_mode_label.configure(text=f"{name} — {description}")
 
     def _mark_settings_dirty(self):
         if not self._settings_tracking_ready:
@@ -300,8 +348,11 @@ class JarvisApp(ctk.CTk):
 
     def _load_models_thread(self):
         try:
-            self.set_status("Загружаю GigaAM...")
-            jarvis_voice.get_gigaam_model()
+            mode = self.settings.get("performance_mode", "balanced")
+            mode_name = PERFORMANCE_MODES.get(mode, PERFORMANCE_MODES["balanced"])[0]
+            self.set_status(f"Запуск • {mode_name}")
+            self.set_status("Загружаю голосовые модели...")
+            jarvis_voice.warmup_voice_models()
             self._set_component("gigaAM", True)
             self.set_status("Проверяю сеть...")
             self._refresh_network_status()
@@ -486,6 +537,7 @@ class JarvisApp(ctk.CTk):
             self.set_status("Готов к работе")
 
     def on_save_settings(self):
+        self.settings["performance_mode"] = self.performance_mode_var.get()
         self.settings["groq_model"] = self.model_entry.get().strip() or self.settings["groq_model"]
         self.settings["xtts_speaker_wav"] = self.voice_wav_entry.get().strip()
         self.settings["xtts_device"] = self.device_var.get()
@@ -502,6 +554,10 @@ class JarvisApp(ctk.CTk):
         self._mark_settings_clean()
 
     def on_close(self):
+        try:
+            jarvis_voice.play_sound(jarvis_voice.SOUND_OFF)
+        except Exception:
+            pass
         try:
             self._stop_wake_word()
         except Exception:
