@@ -6,6 +6,7 @@ import datetime
 import json
 import os
 import shutil
+import socket
 import subprocess
 import webbrowser
 from dataclasses import dataclass
@@ -66,7 +67,6 @@ class CommandManager:
         return CommandMatch(command, result) if command else None
 
     def all_phrases(self) -> list[str]:
-        """Все фразы всех команд — используется для построения Vosk-грамматики."""
         phrases: list[str] = []
         for command in self.commands:
             phrases.extend(command.get("phrases", []))
@@ -144,15 +144,32 @@ class CommandManager:
         except OSError:
             disk_text = "Свободное место системного диска недоступно."
         battery = psutil.sensors_battery()
-        battery_text = "Заряд батареи: питание от сети"
+        battery_text = "Питание: от сети"
         if battery is not None:
             state = "заряжается" if battery.power_plugged and battery.percent < 100 else ("от сети" if battery.power_plugged else "от батареи")
             battery_text = f"Батарея: {battery.percent:.0f}% ({state})"
+        uptime = datetime.datetime.now() - datetime.datetime.fromtimestamp(psutil.boot_time())
+        hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+        days, hours = divmod(hours, 24)
+        uptime_text = f"Аптайм: {days} дн. {hours} ч. {remainder // 60} мин."
         return (
             f"Процессор: {cpu:.0f}%\n"
             f"ОЗУ: {memory.percent:.0f}% занято ({memory.used / (1024 ** 3):.1f} ГБ из {memory.total / (1024 ** 3):.1f} ГБ)\n"
-            f"{disk_text}\n{battery_text}"
+            f"{disk_text}\n{battery_text}\n{uptime_text}"
         )
+
+    @staticmethod
+    def _network_status() -> str:
+        hostname = socket.gethostname()
+        addresses: list[str] = []
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            address = info[4][0]
+            if address != "127.0.0.1" and address not in addresses:
+                addresses.append(address)
+        sent = psutil.net_io_counters().bytes_sent / (1024 ** 3)
+        received = psutil.net_io_counters().bytes_recv / (1024 ** 3)
+        address_text = ", ".join(addresses) if addresses else "локальный интерфейс не определён"
+        return f"Имя компьютера: {hostname}\nЛокальный IP: {address_text}\nПередано: {sent:.2f} ГБ\nПолучено: {received:.2f} ГБ"
 
     def execute(self, match: CommandMatch) -> dict[str, Any]:
         command = match.command
@@ -167,18 +184,10 @@ class CommandManager:
                 message = "Калькулятор успешно открыт."
             elif command_type == "system_status":
                 message = self._system_status()
+            elif command_type == "network_status":
+                message = self._network_status()
             elif command_type == "time":
                 message = f"Сейчас {datetime.datetime.now().strftime('%H:%M')}."
-            elif command_type == "date":
-                now = datetime.datetime.now()
-                weekdays = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-                months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
-                message = f"Сегодня {weekdays[now.weekday()]}, {now.day} {months[now.month - 1]} {now.year} года."
-            elif command_type == "lock_pc":
-                if os.name != "nt":
-                    return {"ok": False, "message": "Блокировка компьютера доступна только в Windows."}
-                subprocess.Popen(["rundll32.exe", "user32.dll,LockWorkStation"], **_POPEN_KWARGS)
-                message = "Компьютер заблокирован."
             elif command_type == "close_app":
                 process_names = command.get("process_names", [])
                 if not process_names:
@@ -225,10 +234,7 @@ class CommandManager:
                 if not query:
                     return {"ok": False, "message": "Не найден поисковый запрос."}
                 engine = command.get("engine", "google")
-                if engine == "youtube":
-                    url = "https://www.youtube.com/results?search_query=" + quote(query)
-                else:
-                    url = "https://www.google.com/search?q=" + quote(query)
+                url = ("https://www.youtube.com/results?search_query=" if engine == "youtube" else "https://www.google.com/search?q=") + quote(query)
                 webbrowser.open(url)
                 message = f"Ищу: {query}"
             elif command_type == "path":
