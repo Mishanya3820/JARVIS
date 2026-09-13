@@ -6,23 +6,18 @@ from jarvis_paths import SETTINGS_FILE
 
 SETTINGS_PATH = str(SETTINGS_FILE)
 DEFAULT_SETTINGS = {
-    # --- Performance ---
-    # performance = максимальная скорость, balanced = баланс, economy = минимум ресурсов.
-    # Модели не выгружаются автоматически ни в одном режиме.
     "performance_mode": "balanced",
-
-    # --- Groq ---
     "groq_api_key": "",
     "groq_model": "openai/gpt-oss-120b",
-
-    # --- Coqui XTTS-v2 ---
+    "tts_engine": "coqui",
     "xtts_speaker_wav": "resources/tts/jarvis_voice.wav",
     "xtts_language": "ru",
     "xtts_device": "cpu",
     "xtts_split_sentences": True,
     "xtts_playback_padding_ms": 80,
-
-    # --- Wake Word ---
+    "elevenlabs_api_key": "",
+    "elevenlabs_voice_id": "",
+    "elevenlabs_model": "eleven_multilingual_v2",
     "wake_word_enabled": True,
     "rustpotter_cli_path": "resources/rustpotter/rustpotter-cli_win_x86_64.exe",
     "rustpotter_model_path": "resources/rustpotter/jarvis-ru.rpw",
@@ -32,7 +27,6 @@ DEFAULT_SETTINGS = {
 
 
 def load_settings() -> dict:
-    """Загружает настройки из settings.json рядом с программой."""
     if os.path.isfile(SETTINGS_PATH):
         try:
             with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
@@ -41,6 +35,8 @@ def load_settings() -> dict:
             settings.update(loaded)
             if settings.get("performance_mode") not in {"performance", "balanced", "economy"}:
                 settings["performance_mode"] = "balanced"
+            if settings.get("tts_engine") not in {"coqui", "elevenlabs"}:
+                settings["tts_engine"] = "coqui"
             return settings
         except Exception:
             pass
@@ -48,21 +44,15 @@ def load_settings() -> dict:
 
 
 def save_settings(settings: dict) -> None:
-    """Сохраняет настройки в корне установленной папки JARVIS."""
     os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
 def get_groq_api_key(settings: dict | None = None) -> str:
-    """Возвращает ключ Groq.
-
-    Переменная окружения имеет приоритет над ключом из settings.json.
-    """
     env_key = os.environ.get("GROQ_API_KEY", "").strip()
     if env_key:
         return env_key
-
     settings = settings or load_settings()
     return (settings.get("groq_api_key") or "").strip()
 
@@ -72,7 +62,6 @@ def has_groq_api_key(settings: dict | None = None) -> bool:
 
 
 def set_groq_api_key(api_key: str, settings: dict | None = None) -> dict:
-    """Устанавливает локальный ключ Groq и сохраняет настройки."""
     settings = settings or load_settings()
     settings["groq_api_key"] = (api_key or "").strip()
     save_settings(settings)
@@ -80,5 +69,22 @@ def set_groq_api_key(api_key: str, settings: dict | None = None) -> dict:
 
 
 def delete_groq_api_key(settings: dict | None = None) -> dict:
-    """Удаляет локальный ключ Groq из settings.json."""
     return set_groq_api_key("", settings)
+
+
+def get_elevenlabs_api_key(settings: dict | None = None) -> str:
+    env_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    settings = settings or load_settings()
+    return (settings.get("elevenlabs_api_key") or "").strip()
+
+
+def has_elevenlabs_api_key(settings: dict | None = None) -> bool:
+    return bool(get_elevenlabs_api_key(settings))
+
+
+def get_performance_mode(settings: dict | None = None) -> str:
+    settings = settings or load_settings()
+    mode = str(settings.get("performance_mode", "balanced")).strip().lower()
+    return mode if mode in {"performance", "balanced", "economy"} else "balanced"
