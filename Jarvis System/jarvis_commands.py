@@ -1,7 +1,8 @@
 # Загрузчик и исполнитель локальных команд JARVIS.
- 
+
 from __future__ import annotations
- 
+
+import datetime
 import json
 import os
 import shutil
@@ -10,11 +11,11 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
- 
+
 import psutil
- 
+
 from jarvis_intent import IntentResult, classify
- 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 COMMANDS_DIR = os.path.join(PROJECT_DIR, "commands")
@@ -26,20 +27,20 @@ _POPEN_KWARGS: dict[str, Any] = {
 }
 if os.name == "nt":
     _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
- 
- 
+
+
 @dataclass
 class CommandMatch:
     command: dict[str, Any]
     result: IntentResult
- 
- 
+
+
 class CommandManager:
     def __init__(self, commands_dir: str = COMMANDS_DIR):
         self.commands_dir = commands_dir
         self.commands: list[dict[str, Any]] = []
         self.reload()
- 
+
     def reload(self) -> None:
         self.commands = []
         if not os.path.isdir(self.commands_dir):
@@ -56,30 +57,27 @@ class CommandManager:
                         self.commands.append(data)
                 except (OSError, json.JSONDecodeError) as e:
                     print(f"[Commands] Не удалось загрузить {path}: {e}")
- 
+
     def match(self, text: str) -> CommandMatch | None:
         result = classify(text, self.commands)
         if result is None:
             return None
         command = next((c for c in self.commands if c.get("id") == result.intent_id), None)
         return CommandMatch(command, result) if command else None
- 
+
     def all_phrases(self) -> list[str]:
-        """Все фразы всех команд — используется для построения
-        Vosk-грамматики (ограниченного словаря распознавания)."""
+        """Все фразы всех команд — используется для построения Vosk-грамматики."""
         phrases: list[str] = []
         for command in self.commands:
             phrases.extend(command.get("phrases", []))
         return phrases
- 
+
     @staticmethod
     def _protocol_registered(uri: str) -> bool:
-        """Проверяет Windows URI-протокол, например discord:// или steam://."""
         if os.name != "nt":
             return True
         try:
             import winreg
- 
             scheme = str(uri).split(":", 1)[0].strip().lower()
             if not scheme:
                 return False
@@ -87,19 +85,15 @@ class CommandManager:
                 return True
         except (FileNotFoundError, OSError):
             return False
- 
+
     @staticmethod
     def _executable_exists(executable: str) -> bool:
         if os.path.isabs(executable):
             return os.path.isfile(executable)
         return shutil.which(executable) is not None
- 
+
     @staticmethod
     def _find_processes(process_names: list[str]) -> list[psutil.Process]:
-        """Ищет запущенные процессы по списку возможных имён (без учёта
-        регистра) — некоторые приложения запускаются под разными именами
-        exe в зависимости от версии (например, современный Калькулятор
-        Windows — CalculatorApp.exe, а не calc.exe)."""
         wanted = {name.lower() for name in process_names}
         found = []
         for proc in psutil.process_iter(["name"]):
@@ -110,12 +104,11 @@ class CommandManager:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         return found
- 
+
     def _close_processes(self, process_names: list[str], display_name: str) -> dict[str, Any]:
         processes = self._find_processes(process_names)
         if not processes:
             return {"ok": False, "message": f"{display_name} не запущен(а)."}
- 
         closed, denied = [], []
         for proc in processes:
             try:
@@ -124,12 +117,7 @@ class CommandManager:
                 denied.append(proc)
             except psutil.NoSuchProcess:
                 continue
- 
-        # Даём процессам немного времени на штатное завершение, и только
-        # тем, кто не закрылся сам, посылаем принудительное завершение.
-        gone, alive = psutil.wait_procs(
-            [p for p in processes if p not in denied], timeout=3
-        )
+        gone, alive = psutil.wait_procs([p for p in processes if p not in denied], timeout=3)
         closed.extend(gone)
         for proc in alive:
             try:
@@ -139,30 +127,37 @@ class CommandManager:
                 denied.append(proc)
             except psutil.NoSuchProcess:
                 continue
- 
         if denied and not closed:
-            return {
-                "ok": False,
-                "message": (
-                    f"Не могу закрыть {display_name.lower()} — недостаточно прав. "
-                    "Обычно так бывает, если приложение запущено с правами "
-                    "администратора или как защищённое системой приложение "
-                    "(например, из Microsoft Store) — Джарвису для этого "
-                    "тоже нужны повышенные права."
-                ),
-            }
+            return {"ok": False, "message": f"Не могу закрыть {display_name.lower()} — недостаточно прав."}
         if denied:
-            return {
-                "ok": True,
-                "message": f"{display_name} закрыт(а) частично — часть процессов не поддалась (недостаточно прав).",
-            }
+            return {"ok": True, "message": f"{display_name} закрыт(а) частично — часть процессов не поддалась."}
         return {"ok": True, "message": f"{display_name} закрыт(а)."}
- 
+
+    @staticmethod
+    def _system_status() -> str:
+        cpu = psutil.cpu_percent(interval=0.4)
+        memory = psutil.virtual_memory()
+        drive = os.environ.get("SystemDrive", "C:")
+        try:
+            disk = psutil.disk_usage(drive + "\\")
+            disk_text = f"Диск {drive}: свободно {disk.free / (1024 ** 3):.1f} ГБ из {disk.total / (1024 ** 3):.1f} ГБ"
+        except OSError:
+            disk_text = "Свободное место системного диска недоступно."
+        battery = psutil.sensors_battery()
+        battery_text = "Заряд батареи: питание от сети"
+        if battery is not None:
+            state = "заряжается" if battery.power_plugged and battery.percent < 100 else ("от сети" if battery.power_plugged else "от батареи")
+            battery_text = f"Батарея: {battery.percent:.0f}% ({state})"
+        return (
+            f"Процессор: {cpu:.0f}%\n"
+            f"ОЗУ: {memory.percent:.0f}% занято ({memory.used / (1024 ** 3):.1f} ГБ из {memory.total / (1024 ** 3):.1f} ГБ)\n"
+            f"{disk_text}\n{battery_text}"
+        )
+
     def execute(self, match: CommandMatch) -> dict[str, Any]:
         command = match.command
         command_type = command.get("type", "python")
         slots = match.result.slots
- 
         try:
             if command_type == "notepad":
                 subprocess.Popen(["notepad.exe"], **_POPEN_KWARGS)
@@ -170,40 +165,38 @@ class CommandManager:
             elif command_type == "calculator":
                 subprocess.Popen(["calc.exe"], **_POPEN_KWARGS)
                 message = "Калькулятор успешно открыт."
+            elif command_type == "system_status":
+                message = self._system_status()
+            elif command_type == "time":
+                message = f"Сейчас {datetime.datetime.now().strftime('%H:%M')}."
+            elif command_type == "date":
+                now = datetime.datetime.now()
+                weekdays = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+                months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
+                message = f"Сегодня {weekdays[now.weekday()]}, {now.day} {months[now.month - 1]} {now.year} года."
+            elif command_type == "lock_pc":
+                if os.name != "nt":
+                    return {"ok": False, "message": "Блокировка компьютера доступна только в Windows."}
+                subprocess.Popen(["rundll32.exe", "user32.dll,LockWorkStation"], **_POPEN_KWARGS)
+                message = "Компьютер заблокирован."
             elif command_type == "close_app":
                 process_names = command.get("process_names", [])
                 if not process_names:
                     return {"ok": False, "message": "Не указаны имена процессов для закрытия."}
                 display_name = command.get("display_name", command.get("id", "Приложение"))
                 result = self._close_processes(process_names, display_name)
-                return {
-                    "ok": result["ok"],
-                    "command_id": command.get("id"),
-                    "confidence": match.result.confidence,
-                    "message": result["message"],
-                }
+                return {"ok": result["ok"], "command_id": command.get("id"), "confidence": match.result.confidence, "message": result["message"]}
             elif command_type == "app":
                 uri = command.get("uri")
                 executable = command.get("executable", "")
- 
                 if uri:
                     if not self._protocol_registered(uri):
                         fallback_url = command.get("fallback_url")
                         if fallback_url:
                             webbrowser.open(fallback_url)
-                            message = command.get(
-                                "missing_message",
-                                "Приложение не установлено. Открыл веб-версию.",
-                            )
+                            message = command.get("missing_message", "Приложение не установлено. Открыл веб-версию.")
                         else:
-                            return {
-                                "ok": False,
-                                "command_id": command.get("id"),
-                                "message": command.get(
-                                    "missing_message",
-                                    "Приложение не установлено.",
-                                ),
-                            }
+                            return {"ok": False, "command_id": command.get("id"), "message": command.get("missing_message", "Приложение не установлено.")}
                     else:
                         os.startfile(uri)
                         message = command.get("success_message", "Приложение открыто.")
@@ -212,25 +205,12 @@ class CommandManager:
                         fallback_url = command.get("fallback_url")
                         if fallback_url:
                             webbrowser.open(fallback_url)
-                            message = command.get(
-                                "missing_message",
-                                "Приложение не установлено. Открыл веб-версию.",
-                            )
+                            message = command.get("missing_message", "Приложение не установлено. Открыл веб-версию.")
                         else:
-                            return {
-                                "ok": False,
-                                "command_id": command.get("id"),
-                                "message": command.get(
-                                    "missing_message",
-                                    f"Не найдено приложение: {executable}",
-                                ),
-                            }
+                            return {"ok": False, "command_id": command.get("id"), "message": command.get("missing_message", f"Не найдено приложение: {executable}")}
                     else:
                         args = command.get("args")
-                        subprocess.Popen(
-                            args if isinstance(args, list) and args else [executable],
-                            **_POPEN_KWARGS,
-                        )
+                        subprocess.Popen(args if isinstance(args, list) and args else [executable], **_POPEN_KWARGS)
                         message = command.get("success_message", "Приложение открыто.")
                 else:
                     return {"ok": False, "message": "Не указано приложение."}
@@ -271,31 +251,23 @@ class CommandManager:
         except Exception as e:
             print(f"[Commands] Ошибка {command.get('id')}: {e}")
             return {"ok": False, "command_id": command.get("id"), "message": str(e)}
- 
-        return {
-            "ok": True,
-            "command_id": command.get("id"),
-            "confidence": match.result.confidence,
-            "message": message,
-        }
- 
- 
+        return {"ok": True, "command_id": command.get("id"), "confidence": match.result.confidence, "message": message}
+
+
 _manager = CommandManager()
- 
- 
+
+
 def reload_commands() -> None:
     _manager.reload()
- 
- 
+
+
 def match_local_command(text: str) -> CommandMatch | None:
     return _manager.match(text)
- 
- 
+
+
 def get_command_grammar_phrases() -> list[str]:
-    """Список всех фраз команд — для грамматически-ограниченного
-    распознавания Vosk (см. jarvis_voice.listen)."""
     return _manager.all_phrases()
- 
- 
+
+
 def execute_local_command(match: CommandMatch) -> dict[str, Any]:
     return _manager.execute(match)
