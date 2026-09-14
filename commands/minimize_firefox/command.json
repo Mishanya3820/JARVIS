@@ -1,0 +1,9 @@
+{
+  "id": "minimize_firefox",
+  "type": "cli",
+  "description": "Сворачивает окна Firefox.",
+  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"Jarvis System\\window_control.ps1\" firefox",
+  "phrases": ["сверни firefox", "сверни фаерфокс", "сверни браузер firefox", "сверни окно firefox"],
+  "threshold": 0.80,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
