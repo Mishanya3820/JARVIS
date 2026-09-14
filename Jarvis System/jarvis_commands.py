@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import datetime
 import json
 import os
@@ -21,13 +22,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 COMMANDS_DIR = os.path.join(PROJECT_DIR, "commands")
 
-_POPEN_KWARGS: dict[str, Any] = {
+_POPen_KWARGS: dict[str, Any] = {
     "stdout": subprocess.DEVNULL,
     "stderr": subprocess.DEVNULL,
     "stdin": subprocess.DEVNULL,
 }
 if os.name == "nt":
-    _POPEN_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
+    _POPen_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 
 @dataclass
@@ -134,6 +135,80 @@ class CommandManager:
         return {"ok": True, "message": f"{display_name} закрыт(а)."}
 
     @staticmethod
+    def _windows_key_action(key: str, modifiers: tuple[int, ...] = ()) -> None:
+        if os.name != "nt":
+            raise RuntimeError("Управление окнами доступно только в Windows.")
+        user32 = ctypes.windll.user32
+        KEYEVENTF_KEYUP = 0x0002
+        VK_LWIN = 0x5B
+        vk = ord(key.upper()) if len(key) == 1 else key
+        user32.keybd_event(VK_LWIN, 0, 0, 0)
+        for modifier in modifiers:
+            user32.keybd_event(modifier, 0, 0, 0)
+        user32.keybd_event(vk, 0, 0, 0)
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+        for modifier in reversed(modifiers):
+            user32.keybd_event(modifier, 0, KEYEVENTF_KEYUP, 0)
+        user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
+
+    @staticmethod
+    def _minimize_all_windows() -> str:
+        CommandManager._windows_key_action("M")
+        return "Все окна свернуты."
+
+    @staticmethod
+    def _restore_all_windows() -> str:
+        # Win+Shift+M восстанавливает окна, свернутые через Win+M.
+        CommandManager._windows_key_action("M", (0x10,))
+        return "Окна восстановлены."
+
+    @staticmethod
+    def _restore_windows(process_names: list[str], display_name: str) -> str:
+        if os.name != "nt":
+            return "Управление окнами доступно только в Windows."
+
+        user32 = ctypes.windll.user32
+        EnumWindows = user32.EnumWindows
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+        IsWindowVisible = user32.IsWindowVisible
+        IsIconic = user32.IsIconic
+        ShowWindow = user32.ShowWindow
+        SetForegroundWindow = user32.SetForegroundWindow
+        SW_RESTORE = 9
+
+        wanted = {name.lower() for name in process_names}
+        matches: list[int] = []
+
+        @EnumWindowsProc
+        def callback(hwnd, _lparam):
+            if not IsWindowVisible(hwnd):
+                return True
+            pid = ctypes.c_ulong()
+            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            try:
+                proc_name = (psutil.Process(pid.value).name() or "").lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return True
+            if proc_name in wanted:
+                matches.append(int(hwnd))
+            return True
+
+        EnumWindows(callback, 0)
+        if not matches:
+            return f"Окно {display_name} не найдено."
+
+        # Если найдено несколько окон одного приложения, восстанавливаем все
+        # и выводим на передний план последнее найденное.
+        for hwnd in matches:
+            if IsIconic(hwnd):
+                ShowWindow(hwnd, SW_RESTORE)
+            else:
+                ShowWindow(hwnd, SW_RESTORE)
+        SetForegroundWindow(matches[-1])
+        return f"{display_name} развернут(а)."
+
+    @staticmethod
     def _system_status() -> str:
         cpu = psutil.cpu_percent(interval=0.4)
         memory = psutil.virtual_memory()
@@ -177,10 +252,10 @@ class CommandManager:
         slots = match.result.slots
         try:
             if command_type == "notepad":
-                subprocess.Popen(["notepad.exe"], **_POPEN_KWARGS)
+                subprocess.Popen(["notepad.exe"], **_POPen_KWARGS)
                 message = "Блокнот успешно открыт."
             elif command_type == "calculator":
-                subprocess.Popen(["calc.exe"], **_POPEN_KWARGS)
+                subprocess.Popen(["calc.exe"], **_POPen_KWARGS)
                 message = "Калькулятор успешно открыт."
             elif command_type == "system_status":
                 message = self._system_status()
@@ -188,6 +263,17 @@ class CommandManager:
                 message = self._network_status()
             elif command_type == "time":
                 message = f"Сейчас {datetime.datetime.now().strftime('%H:%M')}."
+            elif command_type == "minimize_all":
+                message = self._minimize_all_windows()
+            elif command_type == "restore_all":
+                message = self._restore_all_windows()
+            elif command_type == "restore_window":
+                process_names = command.get("process_names", [])
+                if not process_names:
+                    return {"ok": False, "message": "Не указаны процессы для восстановления окна."}
+                display_name = command.get("display_name", command.get("id", "Приложение"))
+                message = self._restore_windows(process_names, display_name)
+                return {"ok": "не найдено" not in message.lower(), "command_id": command.get("id"), "confidence": match.result.confidence, "message": message}
             elif command_type == "close_app":
                 process_names = command.get("process_names", [])
                 if not process_names:
@@ -219,7 +305,7 @@ class CommandManager:
                             return {"ok": False, "command_id": command.get("id"), "message": command.get("missing_message", f"Не найдено приложение: {executable}")}
                     else:
                         args = command.get("args")
-                        subprocess.Popen(args if isinstance(args, list) and args else [executable], **_POPEN_KWARGS)
+                        subprocess.Popen(args if isinstance(args, list) and args else [executable], **_POPen_KWARGS)
                         message = command.get("success_message", "Приложение открыто.")
                 else:
                     return {"ok": False, "message": "Не указано приложение."}
@@ -250,7 +336,7 @@ class CommandManager:
                 cmd = command.get("command", "")
                 if not cmd:
                     return {"ok": False, "message": "Пустая команда."}
-                subprocess.Popen(cmd, shell=True, **_POPEN_KWARGS)
+                subprocess.Popen(cmd, shell=True, **_POPen_KWARGS)
                 message = "Команда запущена."
             else:
                 return {"ok": False, "message": f"Неизвестный тип команды: {command_type}"}
