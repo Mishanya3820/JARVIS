@@ -78,8 +78,13 @@ class JarvisApp(ctk.CTk):
         return ctk.CTkLabel(parent, text=text, text_color=color, font=self._font(size, weight), **kwargs)
 
     def _field(self, parent, **kwargs):
-        return ctk.CTkEntry(parent, height=42, corner_radius=10, fg_color=FIELD, border_color=BORDER, text_color=TEXT, placeholder_text_color=MUTED, **kwargs)
-
+        kwargs.setdefault("height", 42)
+        kwargs.setdefault("corner_radius", 10)
+        kwargs.setdefault("fg_color", FIELD)
+        kwargs.setdefault("border_color", BORDER)
+        kwargs.setdefault("text_color", TEXT)
+        kwargs.setdefault("placeholder_text_color", MUTED)
+        return ctk.CTkEntry(parent, **kwargs)
     def _option(self, parent, variable, values, width=210, command=None):
         return ctk.CTkOptionMenu(parent, variable=variable, values=values, width=width, height=40, corner_radius=10, fg_color=ACCENT_SOFT, button_color=ACCENT, button_hover_color="#68b7ff", dropdown_fg_color=PANEL_2, dropdown_hover_color=ACCENT_SOFT, text_color=TEXT, command=command)
 
@@ -147,10 +152,24 @@ class JarvisApp(ctk.CTk):
         hero.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         hero.grid_columnconfigure(1, weight=1)
         hero.grid_columnconfigure(2, weight=0)
-        orb = ctk.CTkFrame(hero, width=116, height=116, corner_radius=58, fg_color="#102237", border_width=1, border_color="#21405e")
+        orb = ctk.CTkFrame(
+            hero, 
+            width=116, 
+            height=116, 
+            fg_color="transparent"
+        )
         orb.grid(row=0, column=0, rowspan=2, padx=(24, 26), pady=20)
         orb.grid_propagate(False)
-        self.core = ctk.CTkLabel(orb, text="J", width=92, height=92, corner_radius=46, fg_color="#162f49", text_color=ACCENT, font=self._font(42, "bold"))
+
+        self.core = ctk.CTkLabel(
+            orb, 
+            text="J", 
+            width=104, 
+            height=104, 
+            corner_radius=52, 
+            fg_color="#162f49", 
+            text_color=ACCENT, font=self._font(42, "bold")
+        )
         self.core.place(relx=0.5, rely=0.5, anchor="center")
         self._label(hero, "CENTRAL INTELLIGENCE", 10, MUTED, "bold").grid(row=0, column=1, sticky="sw", pady=(20, 0))
         self.status_text = self._label(hero, "Загрузка компонентов...", 21, TEXT, "bold")
@@ -505,10 +524,14 @@ class JarvisApp(ctk.CTk):
                 jarvis_voice.play_ack_sound()
             except Exception:
                 pass
+            self.status_set("Слушаю...")
             result = jarvis_voice.listen()
+
+            self.status_set("Распознаю речь...")
             text = result.get("text", "")
             grammar = result.get("grammar_text")
             if text or grammar:
+                self.status_set("Обрабатываю запрос...")
                 self.process(text, grammar)
         except Exception as exc:
             self.log_add("ОШИБКА", str(exc))
@@ -530,18 +553,30 @@ class JarvisApp(ctk.CTk):
 
     def process(self, text, grammar=None):
         try:
+            self.status_set("Обрабатываю запрос...")
             result = jarvis_core.process_message(text, grammar_text=grammar, on_speak_ready=lambda value: jarvis_tts.speak(value))
             self.log_add("ВЫ", text)
+            if result.get("type") == "streamed":
+                self.status_set("Получаю ответ...")
+            else:
+                self.status_set("Воспроизвожу ответ...")
+
             self.log_add("JARVIS", result.get("text", ""))
+
             if result.get("type") == "sound":
+                self.status_set("Воспроизвожу звук...")
                 jarvis_voice.play_sound(result["path"])
             elif result.get("type") == "local":
+                self.status_set("Воспроизвожу ответ...")
                 jarvis_voice.play_random_ok()
             elif result.get("type") != "streamed":
+                self.status_set("Воспроизвожу ответ...")
                 jarvis_tts.speak(result.get("text", ""))
         except Exception as exc:
+            self.status_set("Ошибка")
             self.log_add("ОШИБКА", str(exc))
         finally:
+            self.status_set("Система готова к работе")
             self.after(0, lambda: self.mic.configure(state="normal" if self.models_ready else "disabled"))
 
     def log_add(self, author, text):

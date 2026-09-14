@@ -1,0 +1,16 @@
+{
+  "id": "close_url",
+  "type": "close_url",
+  "description": "Закрыть указанный сайт",
+  "phrases": [
+    "закрой сайт",
+    "выйди с сайта",
+    "закрыть сайт",
+    "выйти с сайта"
+  ],
+  "slots": ["url"],
+  "threshold": 0.72,
+  "sounds": {
+    "ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]
+  }
+}
