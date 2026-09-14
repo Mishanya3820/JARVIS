@@ -1,8 +1,7 @@
 {
   "id": "minimize_current",
-  "type": "cli",
+  "type": "minimize_current",
   "description": "Сворачивает текущее активное окно.",
-  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys('%{SPACE}n')\"",
   "phrases": [
     "сверни текущее окно",
     "сверни это окно",
