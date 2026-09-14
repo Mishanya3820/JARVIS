@@ -35,7 +35,6 @@ MODES = {
     "balanced": ("Сбалансированный", "Рекомендуемый баланс"),
     "economy": ("Экономичный", "Минимальная нагрузка"),
 }
-MODE_KEYS = list(MODES)
 ENGINES = {"coqui": "Coqui XTTS-v2", "elevenlabs": "ElevenLabs", "silero": "Silero TTS"}
 SILERO_SPEAKERS = {
     "eugene": "Евгений — мужской, глубокий",
@@ -90,7 +89,6 @@ class JarvisApp(ctk.CTk):
     def _build_ui(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
-
         self.sidebar = ctk.CTkFrame(self, width=238, corner_radius=0, fg_color=SIDEBAR)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
@@ -100,7 +98,6 @@ class JarvisApp(ctk.CTk):
         self.nav_settings = self._nav_button("⚙", "Настройки", self.show_settings)
         ctk.CTkFrame(self.sidebar, height=1, fg_color=BORDER_SOFT).pack(fill="x", padx=22, pady=24)
         self._label(self.sidebar, "СОСТОЯНИЕ СИСТЕМЫ", 10, MUTED, "bold").pack(anchor="w", padx=24, pady=(0, 10))
-
         self.dots = {}
         for key, name in (("gigaAM", "GigaAM STT"), ("wake", "Wake word"), ("local", "Local commands"), ("groq", "Groq"), ("xtts", "TTS")):
             row = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=26)
@@ -134,7 +131,6 @@ class JarvisApp(ctk.CTk):
         button.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         return frame, button, icon_label
 
-    # ---------- Main ----------
     def _build_main(self):
         p = self.main_frame
         p.grid_columnconfigure(0, weight=1)
@@ -201,7 +197,6 @@ class JarvisApp(ctk.CTk):
         self._label(card, value, 15, TEXT, "bold").pack(anchor="w", padx=14)
         self._label(card, subtitle, 10, MUTED).pack(anchor="w", padx=14, pady=(1, 11))
 
-    # ---------- Settings ----------
     def _build_settings(self):
         p = self.settings_frame
         p.grid_columnconfigure(0, weight=1)
@@ -223,9 +218,9 @@ class JarvisApp(ctk.CTk):
         self._label(perf, "Режим работы", 13, TEXT, "bold").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 1))
         self._label(perf, "Управляет количеством CPU-потоков. Модели не выгружаются автоматически.", 10, MUTED).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
         current_mode = str(self.settings.get("performance_mode", "balanced"))
-        self.mode = tk.StringVar(value=f"{current_mode}  —  {MODES.get(current_mode, MODES['balanced'])[0]}")
-        mode_values = [f"{key}  —  {MODES[key][0]}" for key in MODE_KEYS]
-        self._option(perf, self.mode, mode_values, width=300, command=self._mark_dirty).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 15))
+        self.mode = tk.StringVar(value=MODES.get(current_mode, MODES["balanced"])[0])
+        mode_values = [name for name, _description in MODES.values()]
+        self._option(perf, self.mode, mode_values, width=250, command=self._mark_dirty).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 15))
 
         self._section_title(scroll, "ОНЛАЙН-ОТВЕТЫ").grid(row=2, column=0, sticky="w", padx=4, pady=(0, 8))
         online = self._card(scroll, fg_color=PANEL)
@@ -261,7 +256,7 @@ class JarvisApp(ctk.CTk):
         self._make_coqui_panel()
         self._make_eleven_panel()
         self._make_silero_panel()
-        self._show_engine(engine_key, mark_dirty=False)
+        self._show_engine(engine_key)
 
         self._section_title(scroll, "ГОЛОСОВАЯ АКТИВАЦИЯ").grid(row=6, column=0, sticky="w", padx=4, pady=(0, 8))
         wake = self._card(scroll, fg_color=PANEL)
@@ -357,9 +352,9 @@ class JarvisApp(ctk.CTk):
             self._mark_dirty()
 
     def _current_mode_key(self):
-        value = self.mode.get()
-        for key in MODE_KEYS:
-            if value.startswith(key):
+        displayed = self.mode.get()
+        for key, (name, _description) in MODES.items():
+            if displayed == name:
                 return key
         return "balanced"
 
@@ -557,7 +552,6 @@ class JarvisApp(ctk.CTk):
             self.log.configure(state="disabled")
         self.after(0, update)
 
-    # ---------- Navigation / animation ----------
     def show_main(self):
         self.settings_frame.grid_remove()
         self.main_frame.grid()
