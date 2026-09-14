@@ -1,0 +1,14 @@
+{
+  "id": "restore_steam",
+  "type": "restore_window",
+  "display_name": "Steam",
+  "process_names": ["steam.exe"],
+  "phrases": [
+    "разверни стим",
+    "разверни steam",
+    "верни стим",
+    "открой окно стима"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
