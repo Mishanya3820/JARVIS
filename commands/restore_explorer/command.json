@@ -1,0 +1,13 @@
+{
+  "id": "restore_explorer",
+  "type": "restore_window",
+  "display_name": "Проводник",
+  "process_names": ["explorer.exe"],
+  "phrases": [
+    "разверни проводник",
+    "верни проводник",
+    "открой окно проводника"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
