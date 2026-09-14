@@ -57,6 +57,7 @@ def set_groq_model(model_name: str) -> None:
 # ИНСТРУМЕНТЫ ДЛЯ GROQ
 # ============================================================
  
+
 def open_notepad() -> str:
     subprocess.Popen(["notepad.exe"])
     return "Блокнот успешно открыт."
@@ -69,7 +70,7 @@ def open_calculator() -> str:
  
 def open_browser(url: str = "https://www.google.com") -> str:
     if not str(url).startswith(("http://", "https://")):
-        url = "https://" + str(url)
+        url = "https://" + url
     webbrowser.open(str(url))
     return f"Браузер открыт, адрес: {url}"
  
@@ -224,6 +225,10 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
     необходимости Groq."""
     local_result, local_matched = match_local_command(user_text, grammar_text)
     if local_matched:
+        # Время — динамический ответ, поэтому его озвучиваем выбранным
+        # TTS-движком, а не стандартным коротким звуком подтверждения.
+        if local_result and local_result.startswith("Сейчас "):
+            return {"type": "tts", "text": local_result}
         return {"type": "local", "text": local_result or "Команда выполнена."}
  
     if not is_online():
