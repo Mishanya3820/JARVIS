@@ -1,0 +1,15 @@
+{
+  "id": "minimize_chrome",
+  "type": "cli",
+  "description": "Сворачивает окна Google Chrome.",
+  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"Jarvis System\\window_control.ps1\" chrome",
+  "phrases": [
+    "сверни хром",
+    "сверни chrome",
+    "сверни гугл хром",
+    "сверни окно хрома",
+    "сверни вкладку хрома"
+  ],
+  "threshold": 0.80,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
