@@ -18,11 +18,31 @@ DEFAULT_SETTINGS = {
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "",
     "elevenlabs_model": "eleven_multilingual_v2",
+    "elevenlabs_output_format": "pcm_24000",
+    "silero_model": "v5_ru",
+    "silero_speaker": "eugene",
+    "silero_device": "cpu",
+    "silero_sample_rate": 48000,
+    "silero_playback_padding_ms": 40,
     "wake_word_enabled": True,
     "rustpotter_cli_path": "resources/rustpotter/rustpotter-cli_win_x86_64.exe",
     "rustpotter_model_path": "resources/rustpotter/jarvis-ru.rpw",
     "rustpotter_device_index": 0,
     "wake_word_threshold": 0.5,
+}
+
+TTS_ENGINES = {
+    "coqui": "Coqui XTTS-v2",
+    "elevenlabs": "ElevenLabs",
+    "silero": "Silero TTS",
+}
+
+SILERO_SPEAKERS = {
+    "aidar": "Айдар — мужской",
+    "baya": "Бая — женский",
+    "kseniya": "Ксения — женский",
+    "xenia": "Ксения — вариант",
+    "eugene": "Евгений — мужской, глубокий",
 }
 
 
@@ -35,7 +55,7 @@ def load_settings() -> dict:
             settings.update(loaded)
             if settings.get("performance_mode") not in {"performance", "balanced", "economy"}:
                 settings["performance_mode"] = "balanced"
-            if settings.get("tts_engine") not in {"coqui", "elevenlabs"}:
+            if settings.get("tts_engine") not in TTS_ENGINES:
                 settings["tts_engine"] = "coqui"
             return settings
         except Exception:
