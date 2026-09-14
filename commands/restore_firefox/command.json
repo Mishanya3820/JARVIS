@@ -1,0 +1,14 @@
+{
+  "id": "restore_firefox",
+  "type": "restore_window",
+  "display_name": "Firefox",
+  "process_names": ["firefox.exe"],
+  "phrases": [
+    "разверни firefox",
+    "разверни фаерфокс",
+    "верни firefox",
+    "открой окно firefox"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
