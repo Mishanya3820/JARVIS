@@ -1,0 +1,13 @@
+{
+  "id": "restore_notepad",
+  "type": "restore_window",
+  "display_name": "Блокнот",
+  "process_names": ["notepad.exe"],
+  "phrases": [
+    "разверни блокнот",
+    "верни блокнот",
+    "открой окно блокнота"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
