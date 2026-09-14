@@ -13,14 +13,12 @@ from jarvis_network import is_online
 from jarvis_paths import PROJECT_DIR
 from jarvis_settings import get_groq_api_key, get_elevenlabs_api_key, load_settings, save_settings
 
-# JARVIS visual system: dark graphite + restrained blue accent.
 BG = "#080c12"
 SIDEBAR = "#0d131b"
 PANEL = "#111923"
 PANEL_2 = "#151f2b"
 PANEL_3 = "#192535"
 FIELD = "#121b26"
-FIELD_HOVER = "#182535"
 BORDER = "#243244"
 BORDER_SOFT = "#1b2735"
 ACCENT = "#4aa8ff"
@@ -38,12 +36,7 @@ MODES = {
     "economy": ("Экономичный", "Минимальная нагрузка"),
 }
 MODE_KEYS = list(MODES)
-ENGINES = {
-    "coqui": "Coqui XTTS-v2",
-    "elevenlabs": "ElevenLabs",
-    "silero": "Silero TTS",
-}
-ENGINE_KEYS = list(ENGINES)
+ENGINES = {"coqui": "Coqui XTTS-v2", "elevenlabs": "ElevenLabs", "silero": "Silero TTS"}
 SILERO_SPEAKERS = {
     "eugene": "Евгений — мужской, глубокий",
     "aidar": "Айдар — мужской",
@@ -67,61 +60,29 @@ class JarvisApp(ctk.CTk):
         self.wake_detector = None
         self.dirty = False
         self._anim_step = 0
-        self._toast_job = None
         self._wake_running = False
 
         self._build_ui()
         self._update_network()
         self.after(200, self._first_run)
-        # Only STT/VAD are preloaded. TTS is deliberately lazy-loaded so startup stays fast.
+        # GigaAM + VAD are kept ready. TTS is loaded lazily on first use.
         threading.Thread(target=self.load_models, daemon=True).start()
         self.animate()
 
-    # -------------------- UI helpers --------------------
     def _font(self, size=12, weight="normal"):
         return ctk.CTkFont(size=size, weight=weight)
 
     def _card(self, parent, **kwargs):
-        return ctk.CTkFrame(
-            parent,
-            fg_color=kwargs.pop("fg_color", PANEL),
-            corner_radius=16,
-            border_width=1,
-            border_color=kwargs.pop("border_color", BORDER_SOFT),
-            **kwargs,
-        )
+        return ctk.CTkFrame(parent, fg_color=kwargs.pop("fg_color", PANEL), corner_radius=16, border_width=1, border_color=kwargs.pop("border_color", BORDER_SOFT), **kwargs)
 
     def _label(self, parent, text, size=12, color=TEXT_2, weight="normal", **kwargs):
         return ctk.CTkLabel(parent, text=text, text_color=color, font=self._font(size, weight), **kwargs)
 
     def _field(self, parent, **kwargs):
-        return ctk.CTkEntry(
-            parent,
-            height=42,
-            corner_radius=10,
-            fg_color=FIELD,
-            border_color=BORDER,
-            text_color=TEXT,
-            placeholder_text_color=MUTED,
-            **kwargs,
-        )
+        return ctk.CTkEntry(parent, height=42, corner_radius=10, fg_color=FIELD, border_color=BORDER, text_color=TEXT, placeholder_text_color=MUTED, **kwargs)
 
     def _option(self, parent, variable, values, width=210, command=None):
-        return ctk.CTkOptionMenu(
-            parent,
-            variable=variable,
-            values=values,
-            width=width,
-            height=40,
-            corner_radius=10,
-            fg_color=ACCENT_SOFT,
-            button_color=ACCENT,
-            button_hover_color="#68b7ff",
-            dropdown_fg_color=PANEL_2,
-            dropdown_hover_color=ACCENT_SOFT,
-            text_color=TEXT,
-            command=command,
-        )
+        return ctk.CTkOptionMenu(parent, variable=variable, values=values, width=width, height=40, corner_radius=10, fg_color=ACCENT_SOFT, button_color=ACCENT, button_hover_color="#68b7ff", dropdown_fg_color=PANEL_2, dropdown_hover_color=ACCENT_SOFT, text_color=TEXT, command=command)
 
     def _section_title(self, parent, text):
         return self._label(parent, text, size=11, color=ACCENT, weight="bold")
@@ -130,49 +91,35 @@ class JarvisApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Sidebar
         self.sidebar = ctk.CTkFrame(self, width=238, corner_radius=0, fg_color=SIDEBAR)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
-
         self._label(self.sidebar, "JARVIS", 29, TEXT, "bold").pack(anchor="w", padx=24, pady=(30, 0))
         self._label(self.sidebar, "LOCAL INTELLIGENCE", 10, ACCENT, "bold").pack(anchor="w", padx=25, pady=(1, 28))
-
         self.nav_system = self._nav_button("⌂", "Система", self.show_main)
         self.nav_settings = self._nav_button("⚙", "Настройки", self.show_settings)
-
         ctk.CTkFrame(self.sidebar, height=1, fg_color=BORDER_SOFT).pack(fill="x", padx=22, pady=24)
         self._label(self.sidebar, "СОСТОЯНИЕ СИСТЕМЫ", 10, MUTED, "bold").pack(anchor="w", padx=24, pady=(0, 10))
 
         self.dots = {}
-        for key, name in (
-            ("gigaAM", "GigaAM STT"),
-            ("wake", "Wake word"),
-            ("local", "Local commands"),
-            ("groq", "Groq"),
-            ("xtts", "TTS"),
-        ):
+        for key, name in (("gigaAM", "GigaAM STT"), ("wake", "Wake word"), ("local", "Local commands"), ("groq", "Groq"), ("xtts", "TTS")):
             row = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=26)
             row.pack(fill="x", padx=24, pady=2)
             self._label(row, name, 12, TEXT_2).pack(side="left")
             dot = ctk.CTkLabel(row, text="●", text_color="#334052", width=18, font=self._font(12, "bold"))
             dot.pack(side="right")
             self.dots[key] = dot
-
         self._label(self.sidebar, "OFFLINE-FIRST  •  WINDOWS", 9, MUTED, "bold").pack(side="bottom", anchor="w", padx=24, pady=22)
 
-        # Main content
         self.content = ctk.CTkFrame(self, fg_color=BG)
         self.content.grid(row=0, column=1, sticky="nsew", padx=(4, 20), pady=18)
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
-
         self.main_frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.settings_frame = ctk.CTkFrame(self.content, fg_color="transparent")
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.settings_frame.grid(row=0, column=0, sticky="nsew")
         self.settings_frame.grid_remove()
-
         self._build_main()
         self._build_settings()
         self.show_main()
@@ -183,27 +130,15 @@ class JarvisApp(ctk.CTk):
         frame.grid_columnconfigure(1, weight=1)
         icon_label = ctk.CTkLabel(frame, text=icon, width=28, text_color=MUTED, font=self._font(16))
         icon_label.grid(row=0, column=0, padx=(8, 3), pady=8)
-        button = ctk.CTkButton(
-            frame,
-            text=text,
-            anchor="w",
-            fg_color="transparent",
-            hover_color=PANEL_3,
-            text_color=TEXT_2,
-            font=self._font(12),
-            height=40,
-            corner_radius=9,
-            command=command,
-        )
+        button = ctk.CTkButton(frame, text=text, anchor="w", fg_color="transparent", hover_color=PANEL_3, text_color=TEXT_2, font=self._font(12), height=40, corner_radius=9, command=command)
         button.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         return frame, button, icon_label
 
-    # -------------------- Main page --------------------
+    # ---------- Main ----------
     def _build_main(self):
         p = self.main_frame
         p.grid_columnconfigure(0, weight=1)
         p.grid_rowconfigure(3, weight=1)
-
         header = ctk.CTkFrame(p, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         header.grid_columnconfigure(0, weight=1)
@@ -216,21 +151,16 @@ class JarvisApp(ctk.CTk):
         hero.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         hero.grid_columnconfigure(1, weight=1)
         hero.grid_columnconfigure(2, weight=0)
-        hero.configure(height=156)
-
         orb = ctk.CTkFrame(hero, width=116, height=116, corner_radius=58, fg_color="#102237", border_width=1, border_color="#21405e")
         orb.grid(row=0, column=0, rowspan=2, padx=(24, 26), pady=20)
         orb.grid_propagate(False)
         self.core = ctk.CTkLabel(orb, text="J", width=92, height=92, corner_radius=46, fg_color="#162f49", text_color=ACCENT, font=self._font(42, "bold"))
         self.core.place(relx=0.5, rely=0.5, anchor="center")
-
         self._label(hero, "CENTRAL INTELLIGENCE", 10, MUTED, "bold").grid(row=0, column=1, sticky="sw", pady=(20, 0))
         self.status_text = self._label(hero, "Загрузка компонентов...", 21, TEXT, "bold")
         self.status_text.grid(row=1, column=1, sticky="nw", pady=(4, 20))
         self.hero_status = ctk.CTkLabel(hero, text="●  ИНИЦИАЛИЗАЦИЯ", text_color=WARN, fg_color="#2a2417", corner_radius=10, font=self._font(10, "bold"))
         self.hero_status.grid(row=0, column=2, rowspan=2, padx=24, pady=20, sticky="e")
-
-        # Moving scan marker makes the animation clearly visible without heavy effects.
         self.scan_line = ctk.CTkFrame(hero, width=2, height=74, fg_color=ACCENT)
         self.scan_line.place(x=175, y=41)
 
@@ -253,7 +183,6 @@ class JarvisApp(ctk.CTk):
         self.log = ctk.CTkTextbox(console, fg_color="#0d141d", text_color=TEXT_2, border_width=0, corner_radius=10, font=self._font(12))
         self.log.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.log.configure(state="disabled")
-
         command = ctk.CTkFrame(p, fg_color="transparent")
         command.grid(row=4, column=0, sticky="ew")
         command.grid_columnconfigure(0, weight=1)
@@ -272,12 +201,11 @@ class JarvisApp(ctk.CTk):
         self._label(card, value, 15, TEXT, "bold").pack(anchor="w", padx=14)
         self._label(card, subtitle, 10, MUTED).pack(anchor="w", padx=14, pady=(1, 11))
 
-    # -------------------- Settings --------------------
+    # ---------- Settings ----------
     def _build_settings(self):
         p = self.settings_frame
         p.grid_columnconfigure(0, weight=1)
         p.grid_rowconfigure(1, weight=1)
-
         header = ctk.CTkFrame(p, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         header.grid_columnconfigure(0, weight=1)
@@ -288,20 +216,17 @@ class JarvisApp(ctk.CTk):
         scroll.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
         scroll.grid_columnconfigure(0, weight=1)
 
-        # Performance
         self._section_title(scroll, "ПРОИЗВОДИТЕЛЬНОСТЬ").grid(row=0, column=0, sticky="w", padx=4, pady=(2, 8))
         perf = self._card(scroll, fg_color=PANEL)
         perf.grid(row=1, column=0, sticky="ew", pady=(0, 16))
         perf.grid_columnconfigure(0, weight=1)
         self._label(perf, "Режим работы", 13, TEXT, "bold").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 1))
         self._label(perf, "Управляет количеством CPU-потоков. Модели не выгружаются автоматически.", 10, MUTED).grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
-        mode_values = [f"{key}  —  {MODES[key][0]}" for key in MODE_KEYS]
         current_mode = str(self.settings.get("performance_mode", "balanced"))
         self.mode = tk.StringVar(value=f"{current_mode}  —  {MODES.get(current_mode, MODES['balanced'])[0]}")
-        self.mode_option = self._option(perf, self.mode, mode_values, width=300, command=self._performance_changed)
-        self.mode_option.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 15))
+        mode_values = [f"{key}  —  {MODES[key][0]}" for key in MODE_KEYS]
+        self._option(perf, self.mode, mode_values, width=300, command=self._mark_dirty).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 15))
 
-        # Online
         self._section_title(scroll, "ОНЛАЙН-ОТВЕТЫ").grid(row=2, column=0, sticky="w", padx=4, pady=(0, 8))
         online = self._card(scroll, fg_color=PANEL)
         online.grid(row=3, column=0, sticky="ew", pady=(0, 16))
@@ -316,7 +241,6 @@ class JarvisApp(ctk.CTk):
         self.gmodel.insert(0, self.settings.get("groq_model", "openai/gpt-oss-120b"))
         self.gmodel.grid(row=1, column=1, sticky="ew", padx=(8, 16), pady=(0, 14))
 
-        # Voice engine
         self._section_title(scroll, "ГОЛОС JARVIS").grid(row=4, column=0, sticky="w", padx=4, pady=(0, 8))
         voice = self._card(scroll, fg_color=PANEL)
         voice.grid(row=5, column=0, sticky="ew", pady=(0, 16))
@@ -325,7 +249,8 @@ class JarvisApp(ctk.CTk):
         top.grid(row=0, column=0, sticky="ew", padx=16, pady=14)
         top.grid_columnconfigure(0, weight=1)
         self._label(top, "Движок озвучки", 14, TEXT, "bold").grid(row=0, column=0, sticky="w")
-        self.engine = tk.StringVar(value=self.settings.get("tts_engine", "coqui"))
+        engine_key = str(self.settings.get("tts_engine", "coqui"))
+        self.engine = tk.StringVar(value=ENGINES.get(engine_key, ENGINES["coqui"]))
         self.engine_option = self._option(top, self.engine, list(ENGINES.values()), width=240, command=self._engine_changed)
         self.engine_option.grid(row=0, column=1, sticky="e")
         self.engine_hint = self._label(voice, "", 10, MUTED, wraplength=760, justify="left")
@@ -336,9 +261,8 @@ class JarvisApp(ctk.CTk):
         self._make_coqui_panel()
         self._make_eleven_panel()
         self._make_silero_panel()
-        self._show_engine(self.settings.get("tts_engine", "coqui"), mark_dirty=False)
+        self._show_engine(engine_key, mark_dirty=False)
 
-        # Wake word
         self._section_title(scroll, "ГОЛОСОВАЯ АКТИВАЦИЯ").grid(row=6, column=0, sticky="w", padx=4, pady=(0, 8))
         wake = self._card(scroll, fg_color=PANEL)
         wake.grid(row=7, column=0, sticky="ew", pady=(0, 22))
@@ -346,19 +270,8 @@ class JarvisApp(ctk.CTk):
         self._label(wake, "Wake word", 14, TEXT, "bold").grid(row=0, column=0, sticky="w", padx=16, pady=(14, 1))
         self._label(wake, "Фраза активации: «Джарвис». Rustpotter слушает микрофон до обнаружения ключевого слова.", 10, TEXT_2, wraplength=760, justify="left").grid(row=1, column=0, sticky="w", padx=16, pady=(0, 10))
         self.wake = tk.BooleanVar(value=bool(self.settings.get("wake_word_enabled", True)))
-        self.wake_check = ctk.CTkCheckBox(
-            wake,
-            text="Включить голосовую активацию",
-            variable=self.wake,
-            text_color=TEXT,
-            hover_color=ACCENT_SOFT,
-            fg_color=ACCENT,
-            border_color="#4b6178",
-            command=self._mark_dirty,
-        )
-        self.wake_check.grid(row=2, column=0, sticky="w", padx=16, pady=(0, 14))
+        ctk.CTkCheckBox(wake, text="Включить голосовую активацию", variable=self.wake, text_color=TEXT, hover_color=ACCENT_SOFT, fg_color=ACCENT, border_color="#4b6178", command=self._mark_dirty).grid(row=2, column=0, sticky="w", padx=16, pady=(0, 14))
 
-        # Save bar is fixed on screen, not hidden at the bottom of the scrollable content.
         self.save_bar = ctk.CTkFrame(p, fg_color=PANEL, corner_radius=14, border_width=1, border_color=BORDER)
         self.save_bar.place(relx=0.99, rely=0.99, anchor="se")
         self.save_state = self._label(self.save_bar, "Все изменения сохранены", 10, MUTED)
@@ -416,25 +329,20 @@ class JarvisApp(ctk.CTk):
         self.srate = tk.StringVar(value=str(self.settings.get("silero_sample_rate", 48000)))
         self._option(self.silero_panel, self.srate, ["24000", "48000"], width=150).grid(row=3, column=0, sticky="w", padx=14, pady=(0, 14))
 
-    # -------------------- Settings behavior --------------------
     def _load_masked_key(self, entry, value):
-        entry.delete(0, "end")
         if value:
+            entry.delete(0, "end")
             entry.insert(0, "•" * 16)
 
     def _mark_dirty(self, *_):
         self.dirty = True
         self.save_state.configure(text="Есть несохранённые изменения", text_color=WARN)
 
-    def _performance_changed(self, displayed):
-        self._mark_dirty()
-
     def _engine_changed(self, displayed):
         reverse = {label: key for key, label in ENGINES.items()}
-        key = reverse.get(displayed, "coqui")
-        self._show_engine(key, mark_dirty=True)
+        self._show_engine(reverse.get(displayed, "coqui"), mark_dirty=True)
 
-    def _show_engine(self, key, mark_dirty=True):
+    def _show_engine(self, key, mark_dirty=False):
         for panel in (self.coqui_panel, self.eleven_panel, self.silero_panel):
             panel.grid_remove()
         hints = {
@@ -463,7 +371,6 @@ class JarvisApp(ctk.CTk):
         return "eugene"
 
     def save(self):
-        # Masked API fields must not overwrite existing keys unless the user actually typed a new value.
         groq_value = self.groq.get().strip()
         if groq_value and groq_value != "•" * 16:
             self.settings["groq_api_key"] = groq_value
@@ -474,7 +381,7 @@ class JarvisApp(ctk.CTk):
         self.settings.update({
             "performance_mode": self._current_mode_key(),
             "groq_model": self.gmodel.get().strip() or "openai/gpt-oss-120b",
-            "tts_engine": next((key for key, label in ENGINES.items() if label == self.engine_option.get()), "coqui"),
+            "tts_engine": next((key for key, label in ENGINES.items() if label == self.engine.get()), "coqui"),
             "xtts_speaker_wav": self.cwav.get().strip(),
             "xtts_device": self.cdev.get(),
             "xtts_language": self.clang.get().strip() or "ru",
@@ -505,8 +412,7 @@ class JarvisApp(ctk.CTk):
         if not self.toast.winfo_exists():
             return
         if step < 12:
-            x = 1.04 - (0.04 * (step + 1) / 12)
-            self.toast.place_configure(relx=x)
+            self.toast.place_configure(relx=1.04 - (0.04 * (step + 1) / 12))
             self.after(18, lambda: self._toast_slide(step + 1))
         else:
             self.after(1900, self._hide_toast)
@@ -517,7 +423,7 @@ class JarvisApp(ctk.CTk):
         self.toast.place_configure(relx=1.04)
         self.after(180, self.toast.destroy)
 
-    # -------------------- Runtime --------------------
+    # ---------- Runtime ----------
     def _update_network(self):
         try:
             online = bool(is_online())
@@ -547,7 +453,6 @@ class JarvisApp(ctk.CTk):
             self.dot("gigaAM", True)
             self.dot("local", True)
             self.dot("groq", bool(get_groq_api_key(self.settings)))
-            # TTS is intentionally NOT warmed up here. It is loaded on first speech.
             self.dot("xtts", jarvis_tts.is_configured())
             self.after(0, lambda: self.mic.configure(state="normal"))
             self.models_ready = True
@@ -572,25 +477,12 @@ class JarvisApp(ctk.CTk):
             from jarvis_wakeword import RustpotterWakeWordDetector
             cli = self.path(self.settings.get("rustpotter_cli_path", "resources/rustpotter/rustpotter-cli_win_x86_64.exe"))
             model = self.path(self.settings.get("rustpotter_model_path", "resources/rustpotter/jarvis-ru.rpw"))
-            self.wake_detector = RustpotterWakeWordDetector(
-                on_wake=self.wake_detect,
-                cli_path=cli,
-                model_path=model,
-                threshold=float(self.settings.get("wake_word_threshold", 0.5)),
-                device_index=int(self.settings.get("rustpotter_device_index", 0)),
-            )
+            self.wake_detector = RustpotterWakeWordDetector(on_wake=self.wake_detect, cli_path=cli, model_path=model, threshold=float(self.settings.get("wake_word_threshold", 0.5)), device_index=int(self.settings.get("rustpotter_device_index", 0)))
             self.wake_detector.start()
             self.dot("wake", True)
-            self.after(0, lambda: self.wake_text_update("Wake word: активен"))
         except Exception as exc:
             print(f"[WakeWord] {exc}")
             self.dot("wake", False)
-            self.after(0, lambda: self.wake_text_update("Wake word: ошибка"))
-
-    def wake_text_update(self, text):
-        # Kept on the main page as a clear status indicator.
-        if hasattr(self, "hero_status") and self.models_ready:
-            self.hero_status.configure(text="●  WAKE ACTIVE" if "активен" in text else "●  READY", text_color=GOOD, fg_color="#12261c")
 
     def _stop_wake(self):
         detector = self.wake_detector
@@ -665,7 +557,7 @@ class JarvisApp(ctk.CTk):
             self.log.configure(state="disabled")
         self.after(0, update)
 
-    # -------------------- Navigation / animation --------------------
+    # ---------- Navigation / animation ----------
     def show_main(self):
         self.settings_frame.grid_remove()
         self.main_frame.grid()
@@ -679,7 +571,7 @@ class JarvisApp(ctk.CTk):
         self._set_nav(self.nav_settings, True)
 
     def _set_nav(self, nav, active):
-        frame, button, icon = nav
+        _frame, button, icon = nav
         if active:
             button.configure(fg_color=PANEL_3, text_color=TEXT)
             icon.configure(text_color=ACCENT)
@@ -689,16 +581,9 @@ class JarvisApp(ctk.CTk):
 
     def animate(self):
         self._anim_step = (self._anim_step + 1) % 60
-        # Soft breathing effect for the J core.
         if self.models_ready:
             phase = self._anim_step % 20
-            if phase < 10:
-                color = "#17334f"
-                inner = "#1a3a5a"
-            else:
-                color = "#10283e"
-                inner = "#152f4a"
-            self.core.configure(fg_color=inner)
+            self.core.configure(fg_color="#1a3a5a" if phase < 10 else "#152f4a")
             try:
                 self.scan_line.place_configure(x=175 + ((self._anim_step * 8) % 520))
             except Exception:
