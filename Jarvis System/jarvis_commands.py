@@ -158,9 +158,63 @@ class CommandManager:
 
     @staticmethod
     def _restore_all_windows() -> str:
-        # Win+Shift+M восстанавливает окна, свернутые через Win+M.
         CommandManager._windows_key_action("M", (0x10,))
         return "Окна восстановлены."
+
+    @staticmethod
+    def _minimize_windows(process_names: list[str], display_name: str) -> str:
+        """Сворачивает окна выбранного приложения через WinAPI."""
+        if os.name != "nt":
+            return "Управление окнами доступно только в Windows."
+
+        user32 = ctypes.windll.user32
+        EnumWindows = user32.EnumWindows
+        EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        GetWindowThreadProcessId = user32.GetWindowThreadProcessId
+        IsWindowVisible = user32.IsWindowVisible
+        ShowWindow = user32.ShowWindow
+        SW_MINIMIZE = 6
+
+        wanted = {name.lower() for name in process_names}
+        matches: list[int] = []
+
+        @EnumWindowsProc
+        def callback(hwnd, _lparam):
+            if not IsWindowVisible(hwnd):
+                return True
+            pid = ctypes.c_ulong()
+            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            try:
+                proc_name = (psutil.Process(pid.value).name() or "").lower()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return True
+            if proc_name in wanted:
+                matches.append(int(hwnd))
+            return True
+
+        EnumWindows(callback, 0)
+        if not matches:
+            return f"Окно {display_name} не найдено."
+
+        for hwnd in matches:
+            ShowWindow(hwnd, SW_MINIMIZE)
+        return f"{display_name} свернут(а)."
+
+    @staticmethod
+    def _minimize_current_window() -> str:
+        """Сворачивает текущее активное окно без PowerShell/SendKeys."""
+        if os.name != "nt":
+            return "Управление окнами доступно только в Windows."
+
+        user32 = ctypes.windll.user32
+        GetForegroundWindow = user32.GetForegroundWindow
+        ShowWindow = user32.ShowWindow
+        SW_MINIMIZE = 6
+        hwnd = GetForegroundWindow()
+        if not hwnd:
+            return "Активное окно не найдено."
+        ShowWindow(hwnd, SW_MINIMIZE)
+        return "Текущее окно свернуто."
 
     @staticmethod
     def _restore_windows(process_names: list[str], display_name: str) -> str:
@@ -172,7 +226,6 @@ class CommandManager:
         EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         GetWindowThreadProcessId = user32.GetWindowThreadProcessId
         IsWindowVisible = user32.IsWindowVisible
-        IsIconic = user32.IsIconic
         ShowWindow = user32.ShowWindow
         SetForegroundWindow = user32.SetForegroundWindow
         SW_RESTORE = 9
@@ -198,13 +251,8 @@ class CommandManager:
         if not matches:
             return f"Окно {display_name} не найдено."
 
-        # Если найдено несколько окон одного приложения, восстанавливаем все
-        # и выводим на передний план последнее найденное.
         for hwnd in matches:
-            if IsIconic(hwnd):
-                ShowWindow(hwnd, SW_RESTORE)
-            else:
-                ShowWindow(hwnd, SW_RESTORE)
+            ShowWindow(hwnd, SW_RESTORE)
         SetForegroundWindow(matches[-1])
         return f"{display_name} развернут(а)."
 
@@ -267,6 +315,15 @@ class CommandManager:
                 message = self._minimize_all_windows()
             elif command_type == "restore_all":
                 message = self._restore_all_windows()
+            elif command_type == "minimize_current":
+                message = self._minimize_current_window()
+            elif command_type == "minimize_window":
+                process_names = command.get("process_names", [])
+                if not process_names:
+                    return {"ok": False, "message": "Не указаны процессы для сворачивания окна."}
+                display_name = command.get("display_name", command.get("id", "Приложение"))
+                message = self._minimize_windows(process_names, display_name)
+                return {"ok": "не найдено" not in message.lower(), "command_id": command.get("id"), "confidence": match.result.confidence, "message": message}
             elif command_type == "restore_window":
                 process_names = command.get("process_names", [])
                 if not process_names:
