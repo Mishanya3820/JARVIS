@@ -1,0 +1,14 @@
+{
+  "id": "minimize_all",
+  "type": "minimize_all",
+  "description": "Сворачивает все окна Windows.",
+  "phrases": [
+    "сверни все окна",
+    "сверни все вкладки",
+    "свернуть все окна",
+    "свернуть всё",
+    "покажи рабочий стол"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
