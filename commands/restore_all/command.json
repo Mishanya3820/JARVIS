@@ -1,0 +1,13 @@
+{
+  "id": "restore_all",
+  "type": "restore_all",
+  "description": "Восстанавливает окна, свернутые командой JARVIS.",
+  "phrases": [
+    "разверни все окна",
+    "восстанови все окна",
+    "верни все окна",
+    "верни окна"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
