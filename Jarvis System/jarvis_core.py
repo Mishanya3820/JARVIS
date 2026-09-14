@@ -1,7 +1,7 @@
 # Ядро JARVIS
- 
+
 from __future__ import annotations
- 
+
 import json
 import queue
 import threading
@@ -9,27 +9,27 @@ import re
 import subprocess
 import webbrowser
 from urllib.parse import quote
- 
+
 from groq import Groq
- 
+
 from jarvis_network import is_online
 from jarvis_settings import get_groq_api_key, load_settings
 from jarvis_voice import SOUND_NOT_FOUND
 from jarvis_commands import match_local_command as _match_command
 from jarvis_commands import execute_local_command
- 
- 
+
+
 GROQ_MODEL = load_settings().get("groq_model", "openai/gpt-oss-120b")
 _groq_client: Groq | None = None
- 
- 
+
+
 def normalize_text(text: str) -> str:
     """Нормализует текст для локальных проверок GUI."""
     text = (text or "").lower().replace("ё", "е")
     text = re.sub(r"[^a-zа-я0-9\s]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
- 
- 
+
+
 def get_groq_client() -> Groq:
     global _groq_client
     if _groq_client is None:
@@ -40,46 +40,46 @@ def get_groq_client() -> Groq:
             )
         _groq_client = Groq(api_key=api_key)
     return _groq_client
- 
- 
+
+
 def reset_groq_client() -> None:
     """Сбрасывает закэшированный клиент после изменения API-ключа."""
     global _groq_client
     _groq_client = None
- 
- 
+
+
 def set_groq_model(model_name: str) -> None:
     global GROQ_MODEL
     GROQ_MODEL = model_name
- 
- 
+
+
 # ============================================================
 # ИНСТРУМЕНТЫ ДЛЯ GROQ
 # ============================================================
- 
+
 
 def open_notepad() -> str:
     subprocess.Popen(["notepad.exe"])
     return "Блокнот успешно открыт."
- 
- 
+
+
 def open_calculator() -> str:
     subprocess.Popen(["calc.exe"])
     return "Калькулятор успешно открыт."
- 
- 
+
+
 def open_browser(url: str = "https://www.google.com") -> str:
     if not str(url).startswith(("http://", "https://")):
         url = "https://" + url
     webbrowser.open(str(url))
     return f"Браузер открыт, адрес: {url}"
- 
- 
+
+
 def search_web(query: str) -> str:
     webbrowser.open(f"https://www.google.com/search?q={quote(str(query))}")
     return f"Выполнен поиск: {query}"
- 
- 
+
+
 def open_app(app_name: str) -> str:
     try:
         import os
@@ -87,8 +87,8 @@ def open_app(app_name: str) -> str:
         return f"Приложение '{app_name}' запущено."
     except Exception as e:
         return f"Не удалось открыть '{app_name}': {e}"
- 
- 
+
+
 def open_path(path: str) -> str:
     try:
         import os
@@ -96,8 +96,8 @@ def open_path(path: str) -> str:
         return f"Путь открыт: {path}"
     except Exception as e:
         return f"Не удалось открыть '{path}': {e}"
- 
- 
+
+
 def run_command(command: str) -> str:
     try:
         result = subprocess.run(
@@ -115,18 +115,18 @@ def run_command(command: str) -> str:
         return "Команда выполняется слишком долго и была прервана."
     except Exception as e:
         return f"Ошибка выполнения команды: {e}"
- 
- 
+
+
 def run_command_async(command: str, on_done=None) -> str:
     def _worker():
         result = run_command(command)
         if on_done:
             on_done(result)
- 
+
     threading.Thread(target=_worker, daemon=True).start()
     return "Выполняю команду."
- 
- 
+
+
 TOOLS_BY_NAME = {
     "open_notepad": open_notepad,
     "open_calculator": open_calculator,
@@ -136,8 +136,8 @@ TOOLS_BY_NAME = {
     "open_path": open_path,
     "run_command": run_command,
 }
- 
- 
+
+
 TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "open_notepad", "description": "Открывает Блокнот Windows.", "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {"name": "open_calculator", "description": "Открывает Калькулятор Windows.", "parameters": {"type": "object", "properties": {}, "required": []}}},
@@ -147,15 +147,15 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "open_path", "description": "Открывает файл или папку Windows.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "run_command", "description": "Выполняет команду cmd.exe, когда другие инструменты не подходят.", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
 ]
- 
- 
+
+
 # ============================================================
 # ЛОКАЛЬНЫЕ КОМАНДЫ
 # ============================================================
- 
+
 def match_local_command(user_text: str, grammar_text: str | None = None):
     """Совместимый интерфейс: возвращает текст результата и факт совпадения.
- 
+
     Если передан grammar_text (результат грамматически-ограниченного
     прохода GigaAM — см. jarvis_voice.listen), он проверяется первым: раз
     распознаватель был ограничен списком именно известных команд и всё
@@ -177,15 +177,15 @@ def match_local_command(user_text: str, grammar_text: str | None = None):
             if not result.get("ok"):
                 return result.get("message", "Не удалось выполнить команду."), True
             return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True
- 
+
     return None, False
- 
- 
+
+
 SYSTEM_PROMPT = """
 Ты — JARVIS, персональный компьютерный ассистент пользователя.
- 
+
 Твои качества: вежливый, спокойный, уверенный, умный и краткий.
- 
+
 Правила:
 - Локальные команды компьютера уже обрабатываются программой до тебя.
 - Если пользователь задаёт обычный вопрос, отвечай непосредственно.
@@ -194,10 +194,10 @@ SYSTEM_PROMPT = """
 - Не утверждай, что действие выполнено, если инструмент сообщил об ошибке.
 - Отвечай кратко, потому что ответ будет озвучен голосом.
 """
- 
+
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]
- 
- 
+
+
 def warmup() -> None:
     client = get_groq_client()
     client.chat.completions.create(
@@ -205,41 +205,42 @@ def warmup() -> None:
         messages=[{"role": "user", "content": "Ответь одним словом: готов."}],
         max_tokens=10,
     )
- 
- 
+
+
 def _call_groq_stream(msgs):
     return get_groq_client().chat.completions.create(
         model=GROQ_MODEL,
         messages=msgs,
         tools=TOOL_SCHEMAS,
+        tool_choice="auto",
+        parallel_tool_calls=False,
+        temperature=0,
         stream=True,
     )
- 
- 
+
+
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?…])\s+")
- 
- 
+
+
 def process_message(user_text: str, grammar_text: str | None = None, on_speak_ready=None) -> dict:
     """Сначала выполняет локальный intent (с приоритетом grammar_text
     над свободным текстом, см. match_local_command), затем при
     необходимости Groq."""
     local_result, local_matched = match_local_command(user_text, grammar_text)
     if local_matched:
-        # Время — динамический ответ, поэтому его озвучиваем выбранным
-        # TTS-движком, а не стандартным коротким звуком подтверждения.
         if local_result and local_result.startswith("Сейчас "):
             return {"type": "tts", "text": local_result}
         return {"type": "local", "text": local_result or "Команда выполнена."}
- 
+
     if not is_online():
         print("[OFFLINE] Локальная команда не найдена.")
         return {"type": "sound", "path": SOUND_NOT_FOUND}
- 
+
     messages.append({"role": "user", "content": user_text})
- 
+
     speech_queue = queue.Queue() if on_speak_ready else None
     speaker_thread = None
- 
+
     if speech_queue is not None:
         def _speaker_worker():
             while True:
@@ -250,16 +251,16 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                     on_speak_ready(sentence)
                 except Exception as e:
                     print(f"[Ошибка озвучки потокового ответа] {e}")
- 
+
         speaker_thread = threading.Thread(target=_speaker_worker, daemon=True)
         speaker_thread.start()
- 
+
     def _stop_speaker():
         if speech_queue is not None:
             speech_queue.put(None)
         if speaker_thread is not None:
             speaker_thread.join()
- 
+
     try:
         while True:
             try:
@@ -270,15 +271,15 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                     messages.pop()
                 _stop_speaker()
                 return {"type": "sound", "path": SOUND_NOT_FOUND}
- 
+
             content_buffer = ""
             spoken_up_to = 0
             tool_calls_acc = {}
- 
+
             try:
                 for chunk in stream:
                     delta = chunk.choices[0].delta
- 
+
                     if delta.tool_calls:
                         for tc_delta in delta.tool_calls:
                             entry = tool_calls_acc.setdefault(tc_delta.index, {"id": None, "name": None, "arguments": ""})
@@ -289,7 +290,7 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                                     entry["name"] = tc_delta.function.name
                                 if tc_delta.function.arguments:
                                     entry["arguments"] += tc_delta.function.arguments
- 
+
                     if delta.content:
                         content_buffer += delta.content
                         if speech_queue is not None and not tool_calls_acc:
@@ -305,7 +306,7 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                 print(f"[Ошибка чтения потока Groq] {e}")
                 _stop_speaker()
                 return {"type": "sound", "path": SOUND_NOT_FOUND}
- 
+
             if tool_calls_acc:
                 messages.append({
                     "role": "assistant",
@@ -315,14 +316,20 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                         for tc in tool_calls_acc.values()
                     ],
                 })
- 
+
                 for tc in tool_calls_acc.values():
                     function_name = tc["name"]
+                    raw_arguments = tc["arguments"] or "{}"
                     try:
-                        function_args = json.loads(tc["arguments"] or "{}")
-                    except json.JSONDecodeError:
-                        function_args = {}
- 
+                        function_args = json.loads(raw_arguments)
+                        if not isinstance(function_args, dict):
+                            raise ValueError("Аргументы инструмента должны быть JSON-объектом.")
+                    except (json.JSONDecodeError, ValueError) as tool_arg_error:
+                        result = f"Ошибка: модель вернула некорректные аргументы инструмента: {tool_arg_error}"
+                        print(f"[Groq] Некорректные аргументы {function_name}: {raw_arguments!r}")
+                        messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                        continue
+
                     tool_func = TOOLS_BY_NAME.get(function_name)
                     if tool_func is None:
                         result = "Ошибка: неизвестный инструмент."
@@ -334,22 +341,22 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                                 result = tool_func(**function_args)
                         except Exception as tool_error:
                             result = f"Ошибка при выполнении инструмента '{function_name}': {tool_error}"
- 
+
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(result)})
- 
+
                 continue
- 
+
             tail = content_buffer[spoken_up_to:].strip()
             if speech_queue is not None and tail:
                 speech_queue.put(tail)
- 
+
             messages.append({"role": "assistant", "content": content_buffer})
             _stop_speaker()
- 
+
             if speech_queue is not None:
                 return {"type": "streamed", "text": content_buffer}
             return {"type": "text", "text": content_buffer}
- 
+
     except Exception:
         _stop_speaker()
         raise
