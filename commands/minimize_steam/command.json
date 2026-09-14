@@ -1,8 +1,9 @@
 {
   "id": "minimize_steam",
-  "type": "cli",
+  "type": "minimize_window",
   "description": "Сворачивает Steam.",
-  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"Jarvis System\\window_control.ps1\" steam",
+  "process_names": ["steam"],
+  "display_name": "Steam",
   "phrases": ["сверни стим", "сверни steam", "сверни окно стима"],
   "threshold": 0.80,
   "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
