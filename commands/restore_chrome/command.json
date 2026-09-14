@@ -1,0 +1,14 @@
+{
+  "id": "restore_chrome",
+  "type": "restore_window",
+  "display_name": "Chrome",
+  "process_names": ["chrome.exe"],
+  "phrases": [
+    "разверни хром",
+    "разверни chrome",
+    "верни хром",
+    "открой окно хрома"
+  ],
+  "threshold": 0.76,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
