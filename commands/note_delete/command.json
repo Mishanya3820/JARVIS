@@ -1,0 +1,13 @@
+{
+  "id": "note_delete",
+  "type": "note_delete",
+  "description": "Удаляет заметку по номеру или тексту.",
+  "phrases": [
+    "удали заметку",
+    "удали из заметок",
+    "убери заметку"
+  ],
+  "slots": ["note_query"],
+  "threshold": 0.80,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
