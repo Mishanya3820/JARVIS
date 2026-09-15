@@ -4,7 +4,12 @@
   "description": "Сворачивает Discord.",
   "process_names": ["Discord"],
   "display_name": "Discord",
-  "phrases": ["сверни дискорд", "сверни discord", "сверни окно дискорда"],
+  "phrases": [
+    "сверни дискорд", 
+    "сверни discord", 
+    "сверни окно дискорда",
+    "сверни окно discord"
+  ],
   "threshold": 0.80,
   "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
 }

@@ -1,5 +1,5 @@
 {
-  "performance_mode": "perfomance",
+  "performance_mode": "performance",
   "groq_api_key": "",
   "groq_model": "openai/gpt-oss-120b",
   "tts_engine": "coqui",

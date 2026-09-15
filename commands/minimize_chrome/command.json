@@ -9,7 +9,9 @@
     "сверни chrome",
     "сверни гугл хром",
     "сверни окно хрома",
-    "сверни окна хрома"
+    "сверни окна хрома",
+    "сверни google chrome",
+    "сверни окно google chrome"
   ],
   "threshold": 0.80,
   "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}

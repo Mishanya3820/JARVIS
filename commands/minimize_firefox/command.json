@@ -4,7 +4,14 @@
   "description": "Сворачивает окна Firefox.",
   "process_names": ["firefox"],
   "display_name": "Firefox",
-  "phrases": ["сверни firefox", "сверни фаерфокс", "сверни браузер firefox", "сверни окно firefox"],
+  "phrases": [
+    "сверни firefox", 
+    "сверни фаерфокс", 
+    "сверни браузер firefox", 
+    "сверни окно firefox",
+    "сверни браузер фаерфокс",
+    "сверни окно фаерфокса"
+  ],
   "threshold": 0.80,
   "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
 }
