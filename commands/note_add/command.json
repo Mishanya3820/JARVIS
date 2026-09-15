@@ -1,0 +1,14 @@
+{
+  "id": "note_add",
+  "type": "note_add",
+  "description": "Добавляет текст в локальные заметки.",
+  "phrases": [
+    "добавь в заметки",
+    "запиши в заметки",
+    "сохрани в заметки",
+    "создай заметку"
+  ],
+  "slots": ["note_text"],
+  "threshold": 0.80,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
