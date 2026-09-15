@@ -1,0 +1,8 @@
+{
+  "id": "reminder_list",
+  "type": "reminder_list",
+  "description": "Показывает активные напоминания.",
+  "phrases": ["покажи напоминания", "какие у меня напоминания", "прочитай напоминания"],
+  "threshold": 0.80,
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
