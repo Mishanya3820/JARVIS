@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 
-from jarvis_paths import PROJECT_DIR, TTS_MODELS_DIR, setup_environment
+from jarvis_paths import PROJECT_DIR, SILERO_MODELS_DIR, TTS_MODELS_DIR, setup_environment
 
 setup_environment()
 os.environ["TTS_HOME"] = str(TTS_MODELS_DIR)
@@ -20,6 +21,12 @@ _speak_lock = threading.Lock()
 _torch = None
 _TTS_CLASS = None
 _MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+_SILERO_DEFAULT_MODEL = "v5_5_ru"
+_SILERO_MODEL_URLS = {
+    "v5_5_ru": "https://models.silero.ai/models/tts/ru/v5_5_ru.pt",
+    "v5_4_ru": "https://models.silero.ai/models/tts/ru/v5_4_ru.pt",
+    "v5_ru": "https://models.silero.ai/models/tts/ru/v5_ru.pt",
+}
 
 
 def _resolve_path(path: str) -> str:
@@ -62,6 +69,10 @@ def model_directory() -> str:
     return str(TTS_MODELS_DIR)
 
 
+def silero_model_directory() -> str:
+    return str(SILERO_MODELS_DIR)
+
+
 def _get_coqui_model():
     global _tts, _TTS_CLASS, _torch
     if _tts is None:
@@ -87,19 +98,33 @@ def _get_silero_model():
         with _tts_lock:
             if _silero is None:
                 settings = load_settings()
-                model_id = str(settings.get("silero_model", "v5_ru")).strip() or "v5_ru"
+                model_id = str(settings.get("silero_model", _SILERO_DEFAULT_MODEL)).strip() or _SILERO_DEFAULT_MODEL
                 speaker = str(settings.get("silero_speaker", "eugene")).strip() or "eugene"
                 device = str(settings.get("silero_device", "cpu")).strip().lower() or "cpu"
+                if model_id not in _SILERO_MODEL_URLS:
+                    print(f"[Silero] Неизвестная модель {model_id}, использую {_SILERO_DEFAULT_MODEL}.")
+                    model_id = _SILERO_DEFAULT_MODEL
+                model_path = Path(SILERO_MODELS_DIR) / f"{model_id}.pt"
                 try:
                     import torch
-                    from silero import silero_tts
                     if device == "cuda" and not torch.cuda.is_available():
                         device = "cpu"
+
+                    if not model_path.is_file():
+                        print(f"[Silero] Модель {model_id} не найдена локально.")
+                        print(f"[Silero] Скачиваю модель в {model_path}...")
+                        SILERO_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+                        torch.hub.download_url_to_file(
+                            _SILERO_MODEL_URLS[model_id],
+                            str(model_path),
+                            progress=True,
+                        )
+
                     print(f"[Silero] Загружаю {model_id} / {speaker} на {device}...")
-                    model, _ = silero_tts(language="ru", speaker=model_id)
+                    model = torch.package.PackageImporter(str(model_path)).load_pickle("tts_models", "model")
                     model.to(device)
                     _silero = (model, speaker, device)
-                    print("[Silero] Модель загружена.")
+                    print(f"[Silero] Модель {model_id} загружена.")
                 except ImportError as exc:
                     raise RuntimeError("Silero TTS не установлен. Установи: pip install silero") from exc
                 except Exception as exc:
