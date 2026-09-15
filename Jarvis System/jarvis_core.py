@@ -154,29 +154,35 @@ TOOL_SCHEMAS = [
 # ============================================================
 
 def match_local_command(user_text: str, grammar_text: str | None = None):
-    """Совместимый интерфейс: возвращает текст результата и факт совпадения.
+    """Выполняет локальную команду, отдавая приоритет grammar_text.
 
-    Если передан grammar_text (результат грамматически-ограниченного
-    прохода GigaAM — см. jarvis_voice.listen), он проверяется первым: раз
-    распознаватель был ограничен списком именно известных команд и всё
-    равно уверенно выбрал одну из них, это куда надёжнее, чем гадать по
-    свободному тексту, который мог "поплыть" на незнакомых словах вроде
-    "дискорд"/"стим". Свободный текст остаётся резервным вариантом —
-    когда grammar_text пуст (сказано что-то, не похожее ни на одну
-    команду) или отсутствует (например, команда пришла из текстового
-    поля, а не голосом).
+    Для команд с динамическими аргументами (например, заметка или
+    напоминание) короткий результат грамматики может содержать только
+    саму команду без аргумента. В таком случае он не выполняется, а
+    проверяется полный свободный текст GigaAM.
     """
     for candidate in (grammar_text, user_text):
         if not candidate:
             continue
         match = _match_command(candidate)
-        if match is not None:
-            print(f"[LOCAL INTENT] {match.result.intent_id} ({match.result.confidence * 100:.1f}%) "
-                  f"slots={match.result.slots} источник={'grammar' if candidate == grammar_text else 'free'}")
-            result = execute_local_command(match)
-            if not result.get("ok"):
-                return result.get("message", "Не удалось выполнить команду."), True
-            return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True
+        if match is None:
+            continue
+
+        required_slots = {
+            slot for slot in match.command.get("slots", [])
+            if slot in {"note_text", "note_query", "reminder_text", "reminder_when", "query", "url", "path"}
+        }
+        if required_slots and any(not match.result.slots.get(slot) for slot in required_slots):
+            if candidate == grammar_text and user_text and user_text != grammar_text:
+                print(f"[LOCAL INTENT] {match.result.intent_id}: грамматика не содержит аргументы, проверяю полный текст")
+                continue
+
+        print(f"[LOCAL INTENT] {match.result.intent_id} ({match.result.confidence * 100:.1f}%) "
+              f"slots={match.result.slots} источник={'grammar' if candidate == grammar_text else 'free'}")
+        result = execute_local_command(match)
+        if not result.get("ok"):
+            return result.get("message", "Не удалось выполнить команду."), True
+        return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True
 
     return None, False
 
@@ -190,7 +196,6 @@ SYSTEM_PROMPT = """
 - Локальные команды компьютера уже обрабатываются программой до тебя.
 - Если пользователь задаёт обычный вопрос, отвечай непосредственно.
 - Если для сложного действия подходит доступный инструмент, используй его.
-- run_command используй только когда другие инструменты не подходят.
 - Не утверждай, что действие выполнено, если инструмент сообщил об ошибке.
 - Отвечай кратко, потому что ответ будет озвучен голосом.
 """
@@ -223,9 +228,6 @@ _SENTENCE_END_RE = re.compile(r"(?<=[.!?…])\s+")
 
 
 def process_message(user_text: str, grammar_text: str | None = None, on_speak_ready=None) -> dict:
-    """Сначала выполняет локальный intent (с приоритетом grammar_text
-    над свободным текстом, см. match_local_command), затем при
-    необходимости Groq."""
     local_result, local_matched = match_local_command(user_text, grammar_text)
     if local_matched:
         if local_result and local_result.startswith("Сейчас "):
@@ -237,7 +239,6 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
         return {"type": "sound", "path": SOUND_NOT_FOUND}
 
     messages.append({"role": "user", "content": user_text})
-
     speech_queue = queue.Queue() if on_speak_ready else None
     speaker_thread = None
 
@@ -251,7 +252,6 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                     on_speak_ready(sentence)
                 except Exception as e:
                     print(f"[Ошибка озвучки потокового ответа] {e}")
-
         speaker_thread = threading.Thread(target=_speaker_worker, daemon=True)
         speaker_thread.start()
 
@@ -275,11 +275,9 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
             content_buffer = ""
             spoken_up_to = 0
             tool_calls_acc = {}
-
             try:
                 for chunk in stream:
                     delta = chunk.choices[0].delta
-
                     if delta.tool_calls:
                         for tc_delta in delta.tool_calls:
                             entry = tool_calls_acc.setdefault(tc_delta.index, {"id": None, "name": None, "arguments": ""})
@@ -290,7 +288,6 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                                     entry["name"] = tc_delta.function.name
                                 if tc_delta.function.arguments:
                                     entry["arguments"] += tc_delta.function.arguments
-
                     if delta.content:
                         content_buffer += delta.content
                         if speech_queue is not None and not tool_calls_acc:
@@ -316,7 +313,6 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                         for tc in tool_calls_acc.values()
                     ],
                 })
-
                 for tc in tool_calls_acc.values():
                     function_name = tc["name"]
                     raw_arguments = tc["arguments"] or "{}"
@@ -329,7 +325,6 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                         print(f"[Groq] Некорректные аргументы {function_name}: {raw_arguments!r}")
                         messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
                         continue
-
                     tool_func = TOOLS_BY_NAME.get(function_name)
                     if tool_func is None:
                         result = "Ошибка: неизвестный инструмент."
@@ -341,22 +336,17 @@ def process_message(user_text: str, grammar_text: str | None = None, on_speak_re
                                 result = tool_func(**function_args)
                         except Exception as tool_error:
                             result = f"Ошибка при выполнении инструмента '{function_name}': {tool_error}"
-
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": str(result)})
-
                 continue
 
             tail = content_buffer[spoken_up_to:].strip()
             if speech_queue is not None and tail:
                 speech_queue.put(tail)
-
             messages.append({"role": "assistant", "content": content_buffer})
             _stop_speaker()
-
             if speech_queue is not None:
                 return {"type": "streamed", "text": content_buffer}
             return {"type": "text", "text": content_buffer}
-
     except Exception:
         _stop_speaker()
         raise
