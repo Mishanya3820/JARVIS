@@ -17,6 +17,7 @@ from urllib.parse import quote
 import psutil
 
 from jarvis_intent import IntentResult, classify
+from jarvis_memory import add_note, add_reminder, delete_note, format_notes, format_reminders
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
@@ -163,18 +164,16 @@ class CommandManager:
 
     @staticmethod
     def _minimize_windows(process_names: list[str], display_name: str) -> str:
-        """Сворачивает окна выбранного приложения через WinAPI."""
         if os.name != "nt":
             return "Управление окнами доступно только в Windows."
-
         user32 = ctypes.windll.user32
         EnumWindows = user32.EnumWindows
         EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
         GetWindowThreadProcessId = user32.GetWindowThreadProcessId
         IsWindowVisible = user32.IsWindowVisible
-        ShowWindow = user32.ShowWindow
+        IsWindow = user32.IsWindow
+        ShowWindowAsync = user32.ShowWindowAsync
         SW_MINIMIZE = 6
-
         wanted = {name.lower() for name in process_names}
         matches: list[int] = []
 
@@ -195,32 +194,32 @@ class CommandManager:
         EnumWindows(callback, 0)
         if not matches:
             return f"Окно {display_name} не найдено."
-
+        minimized = 0
         for hwnd in matches:
-            ShowWindow(hwnd, SW_MINIMIZE)
-        return f"{display_name} свернут(а)."
+            if IsWindow(hwnd):
+                ShowWindowAsync(hwnd, SW_MINIMIZE)
+                minimized += 1
+        return f"{display_name} свернут(а)." if minimized else f"Окно {display_name} не найдено."
 
     @staticmethod
     def _minimize_current_window() -> str:
-        """Сворачивает текущее активное окно без PowerShell/SendKeys."""
+        """Сворачивает активное окно через WinAPI. Никаких SendKeys/PowerShell."""
         if os.name != "nt":
             return "Управление окнами доступно только в Windows."
-
         user32 = ctypes.windll.user32
-        GetForegroundWindow = user32.GetForegroundWindow
-        ShowWindow = user32.ShowWindow
-        SW_MINIMIZE = 6
-        hwnd = GetForegroundWindow()
-        if not hwnd:
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd or not user32.IsWindow(hwnd):
             return "Активное окно не найдено."
-        ShowWindow(hwnd, SW_MINIMIZE)
+        # SW_MINIMIZE только меняет состояние окна и не завершает процесс.
+        if user32.ShowWindowAsync(hwnd, 6) == 0:
+            # Нулевой результат означает предыдущее состояние окна, а не ошибку.
+            pass
         return "Текущее окно свернуто."
 
     @staticmethod
     def _restore_windows(process_names: list[str], display_name: str) -> str:
         if os.name != "nt":
             return "Управление окнами доступно только в Windows."
-
         user32 = ctypes.windll.user32
         EnumWindows = user32.EnumWindows
         EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -229,7 +228,6 @@ class CommandManager:
         ShowWindow = user32.ShowWindow
         SetForegroundWindow = user32.SetForegroundWindow
         SW_RESTORE = 9
-
         wanted = {name.lower() for name in process_names}
         matches: list[int] = []
 
@@ -250,7 +248,6 @@ class CommandManager:
         EnumWindows(callback, 0)
         if not matches:
             return f"Окно {display_name} не найдено."
-
         for hwnd in matches:
             ShowWindow(hwnd, SW_RESTORE)
         SetForegroundWindow(matches[-1])
@@ -275,11 +272,7 @@ class CommandManager:
         hours, remainder = divmod(int(uptime.total_seconds()), 3600)
         days, hours = divmod(hours, 24)
         uptime_text = f"Аптайм: {days} дн. {hours} ч. {remainder // 60} мин."
-        return (
-            f"Процессор: {cpu:.0f}%\n"
-            f"ОЗУ: {memory.percent:.0f}% занято ({memory.used / (1024 ** 3):.1f} ГБ из {memory.total / (1024 ** 3):.1f} ГБ)\n"
-            f"{disk_text}\n{battery_text}\n{uptime_text}"
-        )
+        return f"Процессор: {cpu:.0f}%\nОЗУ: {memory.percent:.0f}% занято ({memory.used / (1024 ** 3):.1f} ГБ из {memory.total / (1024 ** 3):.1f} ГБ)\n{disk_text}\n{battery_text}\n{uptime_text}"
 
     @staticmethod
     def _network_status() -> str:
@@ -311,6 +304,26 @@ class CommandManager:
                 message = self._network_status()
             elif command_type == "time":
                 message = f"Сейчас {datetime.datetime.now().strftime('%H:%M')}."
+            elif command_type == "note_add":
+                note_text = slots.get("note_text", "").strip()
+                if not note_text:
+                    return {"ok": False, "message": "Не понял текст заметки."}
+                note = add_note(note_text)
+                message = f"Сейчас сохранил заметку: {note['text']}."
+            elif command_type == "note_list":
+                message = format_notes()
+            elif command_type == "note_delete":
+                message = "Сейчас " + delete_note(slots.get("note_query", ""))
+            elif command_type == "reminder_add":
+                reminder_text = slots.get("reminder_text", "").strip()
+                reminder_when = slots.get("reminder_when", "").strip()
+                if not reminder_text or not reminder_when:
+                    return {"ok": False, "message": "Не понял время или текст напоминания. Пример: «напомни мне через 20 минут сделать зарядку»."}
+                reminder = add_reminder(reminder_text, reminder_when)
+                due = datetime.datetime.fromisoformat(reminder["due_at"]).strftime("%d.%m в %H:%M")
+                message = f"Сейчас поставил напоминание на {due}: {reminder['text']}."
+            elif command_type == "reminder_list":
+                message = format_reminders()
             elif command_type == "minimize_all":
                 message = self._minimize_all_windows()
             elif command_type == "restore_all":
