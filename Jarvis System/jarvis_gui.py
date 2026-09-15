@@ -86,7 +86,25 @@ class JarvisApp(ctk.CTk):
         return ctk.CTkEntry(parent, **kwargs)
 
     def _option(self, parent, variable, values, width=210, command=None):
-        return ctk.CTkOptionMenu(parent, variable=variable, values=values, width=width, height=40, corner_radius=10, fg_color=ACCENT_SOFT, button_color=ACCENT, button_hover_color="#68b7ff", dropdown_fg_color=PANEL_2, dropdown_hover_color=ACCENT_SOFT, text_color=TEXT, command=command)
+        """Единый тёмный стиль для всех выпадающих списков."""
+        return ctk.CTkOptionMenu(
+            parent,
+            variable=variable,
+            values=values,
+            width=width,
+            height=40,
+            corner_radius=10,
+            fg_color=ACCENT_SOFT,
+            button_color=ACCENT,
+            button_hover_color="#68b7ff",
+            dropdown_fg_color=PANEL_2,
+            dropdown_hover_color=ACCENT_SOFT,
+            dropdown_text_color=TEXT,
+            dropdown_font=self._font(12),
+            text_color=TEXT,
+            font=self._font(12),
+            command=command,
+        )
 
     def _build_ui(self):
         self.grid_columnconfigure(1, weight=1)
