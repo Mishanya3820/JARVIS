@@ -5,7 +5,6 @@ import json
 import os
 import re
 import threading
-import time
 import uuid
 
 from jarvis_paths import PROJECT_DIR
@@ -13,7 +12,6 @@ from jarvis_paths import PROJECT_DIR
 DATA_DIR = os.path.join(str(PROJECT_DIR), "data")
 NOTES_FILE = os.path.join(DATA_DIR, "notes.json")
 REMINDERS_FILE = os.path.join(DATA_DIR, "reminders.json")
-
 _LOCK = threading.RLock()
 
 
@@ -21,8 +19,7 @@ def _load(path: str, default):
     with _LOCK:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                value = json.load(f)
-            return value
+                return json.load(f)
         except (OSError, json.JSONDecodeError, TypeError):
             return default.copy() if isinstance(default, list) else dict(default)
 
@@ -45,11 +42,7 @@ def add_note(text: str) -> dict:
     if not text:
         raise ValueError("Текст заметки пустой.")
     notes = load_notes()
-    note = {
-        "id": uuid.uuid4().hex[:10],
-        "text": text,
-        "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-    }
+    note = {"id": uuid.uuid4().hex[:10], "text": text, "created_at": dt.datetime.now().isoformat(timespec="seconds")}
     notes.append(note)
     _save(NOTES_FILE, notes)
     return note
@@ -67,10 +60,7 @@ def delete_note(query: str) -> str:
             target = notes[index]
     if target is None:
         q = query.lower()
-        for note in notes:
-            if q and q in note.get("text", "").lower():
-                target = note
-                break
+        target = next((note for note in notes if q and q in note.get("text", "").lower()), None)
     if target is None:
         return "Такую заметку не нашёл."
     notes.remove(target)
@@ -82,36 +72,31 @@ def format_notes() -> str:
     notes = load_notes()
     if not notes:
         return "Сейчас заметок нет."
-    parts = [f"{i + 1}. {note.get('text', '')}" for i, note in enumerate(notes[-20:])]
-    return "Сейчас ваши заметки: " + "; ".join(parts)
+    return "Сейчас ваши заметки: " + "; ".join(f"{i + 1}. {n.get('text', '')}" for i, n in enumerate(notes[-20:]))
 
 
 def _parse_clock(value: str) -> tuple[int, int] | None:
     match = re.fullmatch(r"(\d{1,2})(?::|\.)?(\d{2})?", value.strip())
     if not match:
         return None
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        return None
-    return hour, minute
+    hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else None
 
 
 def parse_reminder_datetime(spec: str, now: dt.datetime | None = None) -> dt.datetime:
     now = now or dt.datetime.now()
-    raw = (spec or "").strip().lower().replace("ё", "е")
-    raw = re.sub(r"\s+", " ", raw)
-
+    raw = re.sub(r"\s+", " ", (spec or "").strip().lower().replace("ё", "е"))
     relative = re.fullmatch(r"через\s+(\d+)\s*(минут(?:у|ы)?|мин|час(?:а|ов)?|ч)", raw)
     if relative:
         amount = int(relative.group(1))
-        unit = relative.group(2)
-        delta = dt.timedelta(hours=amount) if unit.startswith(("час", "ч")) else dt.timedelta(minutes=amount)
-        return now + delta
+        return now + (dt.timedelta(hours=amount) if relative.group(2).startswith(("час", "ч")) else dt.timedelta(minutes=amount))
 
     tomorrow = raw.startswith("завтра")
     if tomorrow:
         raw = raw[len("завтра"):].strip()
+        if not raw:
+            base = now + dt.timedelta(days=1)
+            return base.replace(hour=9, minute=0, second=0, microsecond=0)
 
     clock_match = re.search(r"(?:в\s*)?(\d{1,2}(?::|\.)\d{2}|\d{1,2})\s*(?:час(?:а|ов)?|ч)?$", raw)
     if clock_match:
@@ -124,15 +109,10 @@ def parse_reminder_datetime(spec: str, now: dt.datetime | None = None) -> dt.dat
                 result += dt.timedelta(days=1)
             return result
 
-    months = {
-        "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
-        "мая": 5, "июня": 6, "июля": 7, "августа": 8,
-        "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
-    }
+    months = {"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
     date_match = re.search(r"(\d{1,2})\s+([а-я]+)(?:\s+(\d{4}))?", raw)
     if date_match and date_match.group(2) in months:
-        day = int(date_match.group(1))
-        month = months[date_match.group(2)]
+        day, month = int(date_match.group(1)), months[date_match.group(2)]
         year = int(date_match.group(3) or now.year)
         tail = raw[date_match.end():].strip()
         clock_match = re.search(r"(?:в\s*)?(\d{1,2})(?::|\.)(\d{2})", tail)
@@ -146,20 +126,12 @@ def parse_reminder_datetime(spec: str, now: dt.datetime | None = None) -> dt.dat
 
 
 def add_reminder(text: str, when: str) -> dict:
-    text = (text or "").strip()
-    when = (when or "").strip()
+    text, when = (text or "").strip(), (when or "").strip()
     if not text:
         raise ValueError("Текст напоминания пустой.")
     due = parse_reminder_datetime(when)
     reminders = _load(REMINDERS_FILE, [])
-    reminder = {
-        "id": uuid.uuid4().hex[:10],
-        "text": text,
-        "when": when,
-        "due_at": due.isoformat(timespec="seconds"),
-        "done": False,
-        "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-    }
+    reminder = {"id": uuid.uuid4().hex[:10], "text": text, "when": when, "due_at": due.isoformat(timespec="seconds"), "done": False, "created_at": dt.datetime.now().isoformat(timespec="seconds")}
     reminders.append(reminder)
     reminders.sort(key=lambda item: item.get("due_at", ""))
     _save(REMINDERS_FILE, reminders)
@@ -168,33 +140,7 @@ def add_reminder(text: str, when: str) -> dict:
 
 def load_reminders(include_done: bool = False) -> list[dict]:
     reminders = _load(REMINDERS_FILE, [])
-    if include_done:
-        return reminders
-    return [item for item in reminders if not item.get("done")]
-
-
-def delete_reminder(query: str) -> str:
-    query = (query or "").strip()
-    reminders = load_reminders(include_done=True)
-    active = [r for r in reminders if not r.get("done")]
-    if not active:
-        return "Активных напоминаний нет."
-    target = None
-    if query.isdigit():
-        index = int(query) - 1
-        if 0 <= index < len(active):
-            target = active[index]
-    if target is None:
-        q = query.lower()
-        for reminder in active:
-            if q and q in reminder.get("text", "").lower():
-                target = reminder
-                break
-    if target is None:
-        return "Такое напоминание не нашёл."
-    reminders.remove(target)
-    _save(REMINDERS_FILE, reminders)
-    return f"Напоминание отменено: {target.get('text', '')}."
+    return reminders if include_done else [item for item in reminders if not item.get("done")]
 
 
 def format_reminders() -> str:
@@ -204,8 +150,7 @@ def format_reminders() -> str:
     parts = []
     for i, reminder in enumerate(reminders[:20], 1):
         try:
-            due = dt.datetime.fromisoformat(reminder["due_at"])
-            stamp = due.strftime("%d.%m в %H:%M")
+            stamp = dt.datetime.fromisoformat(reminder["due_at"]).strftime("%d.%m в %H:%M")
         except Exception:
             stamp = reminder.get("when", "")
         parts.append(f"{i}. {stamp} — {reminder.get('text', '')}")
