@@ -12,7 +12,7 @@
   "elevenlabs_voice_id": "",
   "elevenlabs_model": "eleven_multilingual_v2",
   "elevenlabs_output_format": "pcm_24000",
-  "silero_model": "v5_ru",
+  "silero_model": "v5_5_ru",
   "silero_speaker": "eugene",
   "silero_device": "cpu",
   "silero_sample_rate": 48000,

@@ -15,6 +15,7 @@ def project_dir() -> Path:
 PROJECT_DIR = project_dir()
 MODELS_DIR = PROJECT_DIR / "Models"
 TTS_MODELS_DIR = MODELS_DIR / "TTS"
+SILERO_MODELS_DIR = TTS_MODELS_DIR / "Silero"
 RESOURCES_DIR = PROJECT_DIR / "resources"
 SETTINGS_FILE = PROJECT_DIR / "Jarvis System" / "settings.json"
 
@@ -22,6 +23,7 @@ SETTINGS_FILE = PROJECT_DIR / "Jarvis System" / "settings.json"
 def setup_environment() -> None:
     """Настраивает каталоги моделей до импорта Coqui TTS."""
     TTS_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    SILERO_MODELS_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Coqui TTS использует TTS_HOME как корень своего каталога моделей.
