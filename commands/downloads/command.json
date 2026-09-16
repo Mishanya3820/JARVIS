@@ -1,0 +1,13 @@
+{
+  "id": "open_downloads",
+  "type": "path",
+  "description": "Открыть папку Загрузки",
+  "path": "%USERPROFILE%\\Downloads",
+  "phrases": [
+    "открой загрузки",
+    "открой папку загрузки",
+    "открой папку загрузок",
+    "запусти загрузки"
+  ],
+  "sounds": {"ok": ["ok1.wav", "ok2.wav", "ok3.wav", "ok4.wav"]}
+}
