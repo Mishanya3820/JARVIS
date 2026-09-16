@@ -633,6 +633,7 @@ class JarvisApp(ctk.CTk):
         finally:
             self.status_set("Система готова к работе")
             self.after(0, lambda: self.mic.configure(state="normal" if self.models_ready else "disabled"))
+            self.after(0, self._refresh_reminders)
 
     def log_add(self, author, text):
         def update():
