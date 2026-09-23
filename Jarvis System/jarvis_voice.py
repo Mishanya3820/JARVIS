@@ -1,44 +1,54 @@
 import os
 import random
 import threading
+import urllib.request
 import warnings
 import wave
-
+ 
 import numpy as np
 import sounddevice as sd
-
+ 
+from jarvis_dsp import AutoGainControl, HighPassFilter
 from jarvis_paths import RESOURCES_DIR
 from jarvis_settings import load_settings
-
+ 
 SAMPLE_RATE = 16000
 VAD_THRESHOLD = 0.5
 SILENCE_DURATION = 0.30
 _WINDOW_SAMPLES = 512
 PLAYBACK_PADDING_MS = 80
-
+ 
+# NOTE: VAD теперь работает через sherpa-onnx (ONNX Runtime), а не через
+# пакет silero-vad + torch. Это тот же движок, который уже используется для
+# GigaAM, и он не тянет PyTorch в память — экономия порядка 150-250 МБ RAM,
+# которые раньше уходили только на то, чтобы определить "человек говорит?".
 PERFORMANCE_MODES = {
-    "performance": {"name": "Производительный", "gigaam_threads": 4, "torch_threads": 4},
-    "balanced": {"name": "Сбалансированный", "gigaam_threads": 2, "torch_threads": 2},
-    "economy": {"name": "Экономичный", "gigaam_threads": 1, "torch_threads": 1},
+    "performance": {"name": "Производительный", "gigaam_threads": 4},
+    "balanced": {"name": "Сбалансированный", "gigaam_threads": 2},
+    "economy": {"name": "Экономичный", "gigaam_threads": 1},
 }
-
-
+ 
+ 
 def get_performance_mode() -> str:
     mode = str(load_settings().get("performance_mode", "balanced")).strip().lower()
     return mode if mode in PERFORMANCE_MODES else "balanced"
-
-
+ 
+ 
 def get_performance_config() -> dict:
     return PERFORMANCE_MODES[get_performance_mode()]
-
-
+ 
+ 
 GIGAAM_DIR = os.path.join(str(RESOURCES_DIR), "gigaam_v3")
 GIGAAM_ENCODER = os.path.join(GIGAAM_DIR, "gigaam_v3_e2e_rnnt_encoder_int8.onnx")
 GIGAAM_DECODER = os.path.join(GIGAAM_DIR, "decoder.onnx")
 GIGAAM_JOINER = os.path.join(GIGAAM_DIR, "joiner.onnx")
 GIGAAM_TOKENS = os.path.join(GIGAAM_DIR, "tokens.txt")
 GIGAAM_NUM_THREADS = 2
-
+ 
+VAD_DIR = os.path.join(str(RESOURCES_DIR), "vad")
+VAD_MODEL_PATH = os.path.join(VAD_DIR, "silero_vad.onnx")
+VAD_MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+ 
 SOUND_DIR = os.path.join(str(RESOURCES_DIR), "sound", "jarvis-og", "ru")
 SOUND_RUN = os.path.join(SOUND_DIR, "run.wav")
 SOUND_OFF = os.path.join(SOUND_DIR, "off.wav")
@@ -46,37 +56,23 @@ SOUND_THANKS = os.path.join(SOUND_DIR, "thanks.wav")
 SOUND_NOT_FOUND = os.path.join(SOUND_DIR, "not_found.wav")
 SOUND_OK = [os.path.join(SOUND_DIR, f"ok{i}.wav") for i in range(1, 5)]
 SOUND_REPLY = [os.path.join(SOUND_DIR, f"reply{i}.wav") for i in range(1, 4)]
-
+ 
 _gigaam_model = None
 _vad_model = None
 _playback_lock = threading.Lock()
 warnings.filterwarnings("ignore", category=SyntaxWarning)
-
-
-def _configure_torch_threads() -> None:
-    try:
-        import torch
-        threads = get_performance_config()["torch_threads"]
-        torch.set_num_threads(threads)
-        try:
-            torch.set_num_interop_threads(max(1, min(threads, 2)))
-        except RuntimeError:
-            pass
-        print(f"[Performance] Режим: {get_performance_config()['name']} • PyTorch threads: {threads}")
-    except Exception as e:
-        print(f"[Performance] Не удалось настроить потоки PyTorch: {e}")
-
-
+ 
+ 
 def _ensure_gigaam_installed() -> None:
     from jarvis_gigaam import install_gigaam, runtime_available
-
+ 
     if runtime_available():
         return
-
+ 
     from jarvis_gigaam_prompt import ask_install
     if not ask_install():
         raise RuntimeError("GigaAM STT не установлен. Установите GigaAM и перезапустите JARVIS.")
-
+ 
     print("[GigaAM] Установка запущена. Это может занять несколько минут...")
     install_gigaam(
         lambda name, current, total: print(
@@ -84,21 +80,21 @@ def _ensure_gigaam_installed() -> None:
         )
     )
     print("[GigaAM] Установка завершена.")
-
-
+ 
+ 
 def get_gigaam_model():
     global _gigaam_model
     if _gigaam_model is not None:
         return _gigaam_model
-
+ 
     _ensure_gigaam_installed()
     import sherpa_onnx
-
+ 
     required_files = [GIGAAM_ENCODER, GIGAAM_DECODER, GIGAAM_JOINER, GIGAAM_TOKENS]
     for path in required_files:
         if not os.path.isfile(path):
             raise FileNotFoundError(f"GigaAM: не найден файл модели:\n{path}")
-
+ 
     config = get_performance_config()
     print(f"[GigaAM] Режим: {config['name']} • потоков: {config['gigaam_threads']}")
     print("[GigaAM] Загружаю модель...")
@@ -115,19 +111,49 @@ def get_gigaam_model():
     )
     print("[GigaAM] Модель загружена.")
     return _gigaam_model
-
-
+ 
+ 
+def _ensure_vad_model_downloaded() -> None:
+    if os.path.isfile(VAD_MODEL_PATH):
+        return
+    os.makedirs(VAD_DIR, exist_ok=True)
+    print("[VAD] Скачиваю silero_vad.onnx (~2 МБ)...")
+    tmp_path = VAD_MODEL_PATH + ".part"
+    request = urllib.request.Request(VAD_MODEL_URL, headers={"User-Agent": "JARVIS-VAD-installer/1.0"})
+    with urllib.request.urlopen(request, timeout=60) as response, open(tmp_path, "wb") as out:
+        out.write(response.read())
+    os.replace(tmp_path, VAD_MODEL_PATH)
+    print("[VAD] Готово.")
+ 
+ 
 def get_vad_model():
+    """Возвращает sherpa-onnx VoiceActivityDetector (Silero VAD в формате ONNX).
+ 
+    В отличие от пакета silero-vad, здесь не требуется PyTorch: используется
+    тот же ONNX Runtime, что и для GigaAM.
+    """
     global _vad_model
     if _vad_model is not None:
         return _vad_model
-    from silero_vad import load_silero_vad
-    print("[VAD] Загружаю Silero VAD...")
-    _vad_model = load_silero_vad()
+    _ensure_vad_model_downloaded()
+    import sherpa_onnx
+    config = sherpa_onnx.VadModelConfig(
+        silero_vad=sherpa_onnx.SileroVadModelConfig(
+            model=VAD_MODEL_PATH,
+            threshold=VAD_THRESHOLD,
+            min_silence_duration=SILENCE_DURATION,
+            min_speech_duration=0.25,
+            window_size=_WINDOW_SAMPLES,
+        ),
+        sample_rate=SAMPLE_RATE,
+        num_threads=1,
+    )
+    print("[VAD] Загружаю Silero VAD (ONNX)...")
+    _vad_model = sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=30)
     print("[VAD] Silero VAD загружен.")
     return _vad_model
-
-
+ 
+ 
 def _decode_pcm_to_float(frames: bytes, sample_width: int):
     if sample_width == 1:
         audio = np.frombuffer(frames, dtype=np.uint8)
@@ -144,8 +170,8 @@ def _decode_pcm_to_float(frames: bytes, sample_width: int):
         audio = np.frombuffer(frames, dtype=np.int32)
         return audio.astype(np.float32) / 2147483648.0
     raise ValueError(f"Неподдерживаемая разрядность WAV: {sample_width * 8} bit")
-
-
+ 
+ 
 def play_sound(path: str) -> None:
     if not path or not os.path.isfile(path):
         print(f"[Ошибка воспроизведения] Файл не найден: {path}")
@@ -167,20 +193,20 @@ def play_sound(path: str) -> None:
             sd.wait()
     except Exception as e:
         print(f"[Ошибка воспроизведения] {e}")
-
-
+ 
+ 
 def play_random_ok() -> None:
     available = [path for path in SOUND_OK if os.path.isfile(path)]
     if available:
         play_sound(random.choice(available))
-
-
+ 
+ 
 def play_ack_sound() -> None:
     available = [path for path in SOUND_REPLY if os.path.isfile(path)]
     if available:
         play_sound(random.choice(available))
-
-
+ 
+ 
 def transcribe_gigaam(audio: np.ndarray) -> str:
     recognizer = get_gigaam_model()
     audio = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -190,49 +216,54 @@ def transcribe_gigaam(audio: np.ndarray) -> str:
     stream.accept_waveform(SAMPLE_RATE, audio)
     recognizer.decode_stream(stream)
     return stream.result.text.strip()
-
-
-def record_and_transcribe(max_seconds: float = 12.0, silence_duration: float = SILENCE_DURATION, pre_speech_timeout: float = 5.0) -> dict:
-    import torch
-    from silero_vad import VADIterator
-    _configure_torch_threads()
+ 
+ 
+def record_and_transcribe(max_seconds: float = 12.0, silence_duration: float = SILENCE_DURATION, pre_speech_timeout: float = 5.0, on_level=None) -> dict:
     vad = get_vad_model()
-    vad_iterator = VADIterator(vad, threshold=VAD_THRESHOLD, sampling_rate=SAMPLE_RATE, min_silence_duration_ms=int(silence_duration * 1000), speech_pad_ms=100)
+    vad.reset()
+    hpf = HighPassFilter(SAMPLE_RATE)
+    agc = AutoGainControl()
     max_samples = int(max_seconds * SAMPLE_RATE)
     pre_speech_max_samples = int(pre_speech_timeout * SAMPLE_RATE)
     total_samples = 0
     speech_started = False
+    was_speech = False
     audio_chunks = []
     print("Слушаю... (GigaAM + Silero VAD)")
-    try:
-        with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=_WINDOW_SAMPLES) as stream:
-            while total_samples < max_samples:
-                block, _overflowed = stream.read(_WINDOW_SAMPLES)
-                block = block.flatten()
-                if len(block) < _WINDOW_SAMPLES:
-                    break
-                total_samples += len(block)
-                tensor = torch.from_numpy(block.copy())
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=_WINDOW_SAMPLES) as stream:
+        while total_samples < max_samples:
+            block, _overflowed = stream.read(_WINDOW_SAMPLES)
+            block = block.flatten()
+            if len(block) < _WINDOW_SAMPLES:
+                break
+            total_samples += len(block)
+            # Убираем гул/наводки корпуса перед VAD и распознаванием — это
+            # безопасно для обоих (см. jarvis_dsp.py). AGC — только ниже,
+            # отдельно для того, что реально уйдёт в GigaAM.
+            block = hpf.process(block)
+            if on_level is not None:
                 try:
-                    vad_event = vad_iterator(tensor, return_seconds=False)
-                except TypeError:
-                    vad_event = vad_iterator(tensor)
-                if vad_event and "start" in vad_event:
-                    speech_started = True
-                    print("[VAD] Речь обнаружена.")
-                if speech_started:
-                    audio_chunks.append(block.copy())
-                if not speech_started and total_samples >= pre_speech_max_samples:
-                    print("[VAD] Таймаут ожидания речи.")
-                    break
-                if speech_started and vad_event and "end" in vad_event:
-                    print("[VAD] Конец речи.")
-                    break
-    finally:
-        try:
-            vad_iterator.reset_states()
-        except Exception:
-            pass
+                    on_level(float(np.sqrt(np.mean(np.square(block)))))
+                except Exception:
+                    pass
+            vad.accept_waveform(block)
+            is_speech = vad.is_speech_detected()
+            if is_speech and not was_speech:
+                speech_started = True
+                print("[VAD] Речь обнаружена.")
+            if speech_started:
+                # AGC применяется только здесь, ПОСЛЕ решения VAD — усиление
+                # тихого голоса не должно влиять на то, что видит сам VAD
+                # (иначе поднятый шумовой пол мог бы провоцировать ложные
+                # срабатывания).
+                audio_chunks.append(agc.process(block))
+            if not speech_started and total_samples >= pre_speech_max_samples:
+                print("[VAD] Таймаут ожидания речи.")
+                break
+            if speech_started and was_speech and not is_speech:
+                print("[VAD] Конец речи.")
+                break
+            was_speech = is_speech
     if not speech_started or not audio_chunks:
         return {"text": "", "grammar_text": None}
     audio = np.concatenate(audio_chunks).astype(np.float32)
@@ -246,14 +277,13 @@ def record_and_transcribe(max_seconds: float = 12.0, silence_duration: float = S
         return {"text": "", "grammar_text": None}
     print(f"[GigaAM распознал]: {text}")
     return {"text": text, "grammar_text": None}
-
-
-def listen() -> dict:
-    return record_and_transcribe()
-
-
+ 
+ 
+def listen(on_level=None) -> dict:
+    return record_and_transcribe(on_level=on_level)
+ 
+ 
 def warmup_voice_models():
-    _configure_torch_threads()
     print("[Voice] Предзагрузка голосовых моделей...")
     get_vad_model()
     get_gigaam_model()

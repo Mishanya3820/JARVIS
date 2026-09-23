@@ -1,7 +1,7 @@
 # Загрузчик и исполнитель локальных команд JARVIS.
-
+ 
 from __future__ import annotations
-
+ 
 import ctypes
 import datetime
 import json
@@ -13,16 +13,16 @@ import webbrowser
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
-
+ 
 import psutil
-
-from jarvis_intent import IntentResult, classify
+ 
+from jarvis_intent import IntentResult, classify, classify_candidates, extract_slots
 from jarvis_memory import add_note, add_reminder, delete_note, format_notes, format_reminders
-
+ 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)
 COMMANDS_DIR = os.path.join(PROJECT_DIR, "commands")
-
+ 
 _POPen_KWARGS: dict[str, Any] = {
     "stdout": subprocess.DEVNULL,
     "stderr": subprocess.DEVNULL,
@@ -30,20 +30,20 @@ _POPen_KWARGS: dict[str, Any] = {
 }
 if os.name == "nt":
     _POPen_KWARGS["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-
+ 
+ 
 @dataclass
 class CommandMatch:
     command: dict[str, Any]
     result: IntentResult
-
-
+ 
+ 
 class CommandManager:
     def __init__(self, commands_dir: str = COMMANDS_DIR):
         self.commands_dir = commands_dir
         self.commands: list[dict[str, Any]] = []
         self.reload()
-
+ 
     def reload(self) -> None:
         self.commands = []
         if not os.path.isdir(self.commands_dir):
@@ -60,20 +60,32 @@ class CommandManager:
                         self.commands.append(data)
                 except (OSError, json.JSONDecodeError) as e:
                     print(f"[Commands] Не удалось загрузить {path}: {e}")
-
+ 
     def match(self, text: str) -> CommandMatch | None:
         result = classify(text, self.commands)
         if result is None:
             return None
         command = next((c for c in self.commands if c.get("id") == result.intent_id), None)
         return CommandMatch(command, result) if command else None
-
+ 
+    def near_miss_candidates(self, text: str, margin: float = 0.18, floor: float = 0.45, limit: int = 5) -> list[tuple[float, dict[str, Any]]]:
+        """Команды, чей фаззи-скор оказался близко к порогу, но не дотянул
+        до него — кандидаты для уточнения через LLM (см. jarvis_core.py).
+        Не влияет на обычный match() и его порог — чисто отдельный путь."""
+        candidates = classify_candidates(text, self.commands, limit=limit)
+        near = []
+        for score, command in candidates:
+            threshold = float(command.get("threshold", 0.72))
+            if max(floor, threshold - margin) <= score < threshold:
+                near.append((score, command))
+        return near
+ 
     def all_phrases(self) -> list[str]:
         phrases: list[str] = []
         for command in self.commands:
             phrases.extend(command.get("phrases", []))
         return phrases
-
+ 
     @staticmethod
     def _protocol_registered(uri: str) -> bool:
         if os.name != "nt":
@@ -87,13 +99,13 @@ class CommandManager:
                 return True
         except (FileNotFoundError, OSError):
             return False
-
+ 
     @staticmethod
     def _executable_exists(executable: str) -> bool:
         if os.path.isabs(executable):
             return os.path.isfile(executable)
         return shutil.which(executable) is not None
-
+ 
     @staticmethod
     def _find_processes(process_names: list[str]) -> list[psutil.Process]:
         wanted = {name.lower() for name in process_names}
@@ -106,7 +118,7 @@ class CommandManager:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         return found
-
+ 
     def _close_processes(self, process_names: list[str], display_name: str) -> dict[str, Any]:
         processes = self._find_processes(process_names)
         if not processes:
@@ -134,7 +146,7 @@ class CommandManager:
         if denied:
             return {"ok": True, "message": f"{display_name} закрыт(а) частично — часть процессов не поддалась."}
         return {"ok": True, "message": f"{display_name} закрыт(а)."}
-
+ 
     @staticmethod
     def _windows_key_action(key: str, modifiers: tuple[int, ...] = ()) -> None:
         if os.name != "nt":
@@ -151,17 +163,17 @@ class CommandManager:
         for modifier in reversed(modifiers):
             user32.keybd_event(modifier, 0, KEYEVENTF_KEYUP, 0)
         user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
-
+ 
     @staticmethod
     def _minimize_all_windows() -> str:
         CommandManager._windows_key_action("M")
         return "Все окна свернуты."
-
+ 
     @staticmethod
     def _restore_all_windows() -> str:
         CommandManager._windows_key_action("M", (0x10,))
         return "Окна восстановлены."
-
+ 
     @staticmethod
     def _minimize_windows(process_names: list[str], display_name: str) -> str:
         if os.name != "nt":
@@ -176,7 +188,7 @@ class CommandManager:
         SW_MINIMIZE = 6
         wanted = {name.lower() for name in process_names}
         matches: list[int] = []
-
+ 
         @EnumWindowsProc
         def callback(hwnd, _lparam):
             if not IsWindowVisible(hwnd):
@@ -190,7 +202,7 @@ class CommandManager:
             if proc_name in wanted:
                 matches.append(int(hwnd))
             return True
-
+ 
         EnumWindows(callback, 0)
         if not matches:
             return f"Окно {display_name} не найдено."
@@ -200,7 +212,7 @@ class CommandManager:
                 ShowWindowAsync(hwnd, SW_MINIMIZE)
                 minimized += 1
         return f"{display_name} свернут(а)." if minimized else f"Окно {display_name} не найдено."
-
+ 
     @staticmethod
     def _minimize_current_window() -> str:
         """Сворачивает активное окно через WinAPI. Никаких SendKeys/PowerShell."""
@@ -215,7 +227,7 @@ class CommandManager:
             # Нулевой результат означает предыдущее состояние окна, а не ошибку.
             pass
         return "Текущее окно свернуто."
-
+ 
     @staticmethod
     def _restore_windows(process_names: list[str], display_name: str) -> str:
         if os.name != "nt":
@@ -230,7 +242,7 @@ class CommandManager:
         SW_RESTORE = 9
         wanted = {name.lower() for name in process_names}
         matches: list[int] = []
-
+ 
         @EnumWindowsProc
         def callback(hwnd, _lparam):
             if not IsWindowVisible(hwnd):
@@ -244,7 +256,7 @@ class CommandManager:
             if proc_name in wanted:
                 matches.append(int(hwnd))
             return True
-
+ 
         EnumWindows(callback, 0)
         if not matches:
             return f"Окно {display_name} не найдено."
@@ -252,7 +264,7 @@ class CommandManager:
             ShowWindow(hwnd, SW_RESTORE)
         SetForegroundWindow(matches[-1])
         return f"{display_name} развернут(а)."
-
+ 
     @staticmethod
     def _system_status() -> str:
         cpu = psutil.cpu_percent(interval=0.4)
@@ -273,7 +285,7 @@ class CommandManager:
         days, hours = divmod(hours, 24)
         uptime_text = f"Аптайм: {days} дн. {hours} ч. {remainder // 60} мин."
         return f"Процессор: {cpu:.0f}%\nОЗУ: {memory.percent:.0f}% занято ({memory.used / (1024 ** 3):.1f} ГБ из {memory.total / (1024 ** 3):.1f} ГБ)\n{disk_text}\n{battery_text}\n{uptime_text}"
-
+ 
     @staticmethod
     def _network_status() -> str:
         hostname = socket.gethostname()
@@ -286,7 +298,7 @@ class CommandManager:
         received = psutil.net_io_counters().bytes_recv / (1024 ** 3)
         address_text = ", ".join(addresses) if addresses else "локальный интерфейс не определён"
         return f"Имя компьютера: {hostname}\nЛокальный IP: {address_text}\nПередано: {sent:.2f} ГБ\nПолучено: {received:.2f} ГБ"
-
+ 
     def execute(self, match: CommandMatch) -> dict[str, Any]:
         command = match.command
         command_type = command.get("type", "python")
@@ -414,22 +426,38 @@ class CommandManager:
             print(f"[Commands] Ошибка {command.get('id')}: {e}")
             return {"ok": False, "command_id": command.get("id"), "message": str(e)}
         return {"ok": True, "command_id": command.get("id"), "confidence": match.result.confidence, "message": message}
-
-
+ 
+ 
 _manager = CommandManager()
-
-
+ 
+ 
 def reload_commands() -> None:
     _manager.reload()
-
-
+ 
+ 
 def match_local_command(text: str) -> CommandMatch | None:
     return _manager.match(text)
-
-
+ 
+ 
+def get_near_miss_commands(text: str) -> list[tuple[float, dict[str, Any]]]:
+    """Команды-кандидаты, не дотянувшие до порога фаззи-матчинга — для
+    уточнения через LLM, когда обычный match_local_command() вернул None."""
+    return _manager.near_miss_candidates(text)
+ 
+ 
+def build_command_match(command: dict[str, Any], text: str, confidence: float) -> CommandMatch:
+    """Собирает CommandMatch для команды, которую выбрал LLM (а не обычный
+    фаззи-скоринг) — слоты всё равно извлекаются тем же extract_slots, что
+    и в обычном пути, так что поведение (напр. проверка обязательных
+    слотов в jarvis_core.py) остаётся единым для обоих путей."""
+    slot_names = list(command.get("slots", []))
+    result = IntentResult(intent_id=command["id"], confidence=confidence, slots=extract_slots(text, slot_names))
+    return CommandMatch(command, result)
+ 
+ 
 def get_command_grammar_phrases() -> list[str]:
     return _manager.all_phrases()
-
-
+ 
+ 
 def execute_local_command(match: CommandMatch) -> dict[str, Any]:
     return _manager.execute(match)

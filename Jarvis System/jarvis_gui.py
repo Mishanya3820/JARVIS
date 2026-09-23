@@ -1,11 +1,14 @@
 from __future__ import annotations
-
+ 
+import math
 import os
 import threading
+import time
 import tkinter as tk
-
+ 
 import customtkinter as ctk
-
+import numpy as np
+ 
 import jarvis_core
 import jarvis_tts
 import jarvis_voice
@@ -13,7 +16,7 @@ from jarvis_memory import add_note, add_reminder, delete_note, format_notes, for
 from jarvis_network import is_online
 from jarvis_paths import PROJECT_DIR
 from jarvis_settings import get_elevenlabs_api_key, get_groq_api_key, load_settings, save_settings
-
+ 
 BG = "#080c12"
 SIDEBAR = "#0d131b"
 PANEL = "#111923"
@@ -29,7 +32,47 @@ MUTED = "#718096"
 GOOD = "#62d391"
 WARN = "#e5b85c"
 BAD = "#ef7373"
-
+ 
+# Цвета состояний центрального визуализатора — используются и в hero-пилюле,
+# и в canvas-анимации, чтобы одно состояние всегда выглядело одинаково.
+STATE_COLORS = {
+    "idle": (ACCENT, "#12212f"),
+    "listening": (ACCENT, "#12212f"),
+    "thinking": (WARN, "#2a2417"),
+    "speaking": (GOOD, "#12261c"),
+    "error": (BAD, "#2b171b"),
+}
+STATE_LABELS = {
+    "idle": "READY",
+    "listening": "СЛУШАЮ",
+    "thinking": "ДУМАЮ",
+    "speaking": "ГОВОРЮ",
+    "error": "ERROR",
+}
+ 
+_PREFERRED_FONTS = ("Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", "Segoe UI Semibold")
+_resolved_font_family: str | None = None
+ 
+ 
+def _resolve_font_family() -> str:
+    """Подбирает самый современный доступный на машине шрифт из Segoe UI
+    Variable, с откатом на обычный Segoe UI. Определяется один раз."""
+    global _resolved_font_family
+    if _resolved_font_family is not None:
+        return _resolved_font_family
+    try:
+        import tkinter.font as tkfont
+        available = set(tkfont.families())
+    except Exception:
+        available = set()
+    for name in _PREFERRED_FONTS:
+        if name in available:
+            _resolved_font_family = name
+            break
+    else:
+        _resolved_font_family = "Segoe UI"
+    return _resolved_font_family
+ 
 MODES = {
     "performance": ("Производительный", "Максимальная скорость"),
     "balanced": ("Сбалансированный", "Рекомендуемый баланс"),
@@ -43,8 +86,8 @@ SILERO_SPEAKERS = {
     "kseniya": "Ксения — женский",
     "xenia": "Ксения — вариант",
 }
-
-
+ 
+ 
 class JarvisApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -53,29 +96,48 @@ class JarvisApp(ctk.CTk):
         self.minsize(980, 680)
         self.configure(fg_color=BG)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-
+ 
         self.settings = load_settings()
         self.models_ready = False
+        self._models_loading = False
         self.wake_detector = None
         self._wake_running = False
         self._anim_step = 0
+        self._visual_state = "idle"
+        self._built_mode = None
+        self._mic_level = 0.0
+        self._mic_level_raw = 0.0
+        self._font_cache: dict[tuple[int, str], ctk.CTkFont] = {}
         self._pages: dict[str, ctk.CTkFrame] = {}
         self.reminder_stop = start_reminder_scheduler(self._on_reminder)
-
+ 
         self._build_ui()
         self._update_network()
-        threading.Thread(target=self.load_models, daemon=True).start()
+        self._update_status_indicators()
+        self.dot("local", True)
+        if self.settings.get("wake_word_enabled"):
+            # Голосовая активация должна слушать постоянно, поэтому только в
+            # этом случае модели STT/VAD грузятся сразу при старте.
+            self._start_model_load()
+        else:
+            self.status_set("Готов. Печатайте команды или нажмите на микрофон — голосовые модели загрузятся при первом использовании.")
+            self._set_state("idle", label_override="ГОТОВ (ТЕКСТ)")
         self.animate()
-
+ 
     def _font(self, size=12, weight="normal"):
-        return ctk.CTkFont(size=size, weight=weight)
-
+        key = (size, weight)
+        cached = self._font_cache.get(key)
+        if cached is None:
+            cached = ctk.CTkFont(family=_resolve_font_family(), size=size, weight=weight)
+            self._font_cache[key] = cached
+        return cached
+ 
     def _card(self, parent, **kwargs):
         return ctk.CTkFrame(parent, fg_color=kwargs.pop("fg_color", PANEL), corner_radius=16, border_width=1, border_color=kwargs.pop("border_color", BORDER), **kwargs)
-
+ 
     def _label(self, parent, text, size=12, color=TEXT_2, weight="normal", **kwargs):
         return ctk.CTkLabel(parent, text=text, text_color=color, font=self._font(size, weight), **kwargs)
-
+ 
     def _field(self, parent, **kwargs):
         kwargs.setdefault("height", 42)
         kwargs.setdefault("corner_radius", 10)
@@ -84,7 +146,7 @@ class JarvisApp(ctk.CTk):
         kwargs.setdefault("text_color", TEXT)
         kwargs.setdefault("placeholder_text_color", MUTED)
         return ctk.CTkEntry(parent, **kwargs)
-
+ 
     def _option(self, parent, variable, values, width=210, command=None):
         """Единый тёмный стиль для всех выпадающих списков."""
         return ctk.CTkOptionMenu(
@@ -105,7 +167,49 @@ class JarvisApp(ctk.CTk):
             font=self._font(12),
             command=command,
         )
-
+ 
+    def _lerp_hex(self, a: str, b: str, t: float) -> str:
+        ar, ag, ab = int(a[1:3], 16), int(a[3:5], 16), int(a[5:7], 16)
+        br, bg, bb = int(b[1:3], 16), int(b[3:5], 16), int(b[5:7], 16)
+        r = round(ar + (br - ar) * t)
+        g = round(ag + (bg - ag) * t)
+        b_ = round(ab + (bb - ab) * t)
+        return f"#{r:02x}{g:02x}{b_:02x}"
+ 
+    def _tween(self, steps_left, total_steps, apply_fn):
+        t = 1 - (steps_left / total_steps)
+        eased = 1 - (1 - t) ** 3  # ease-out cubic — приятнее, чем линейно
+        apply_fn(eased)
+        if steps_left > 0:
+            self.after(14, lambda: self._tween(steps_left - 1, total_steps, apply_fn))
+ 
+    def _set_state(self, state: str, label_override: str | None = None):
+        """Единая точка входа для смены состояния JARVIS (idle/listening/
+        thinking/speaking/error). Красит hero-пилюлю плавным перетеканием
+        цвета вместо мгновенной смены и переключает режим визуализатора."""
+        self._visual_state = state
+        color, bg = STATE_COLORS.get(state, STATE_COLORS["idle"])
+        label = label_override or STATE_LABELS.get(state, "READY")
+        if not hasattr(self, "hero_status") or not self.hero_status.winfo_exists():
+            return
+        current_bg = self.hero_status.cget("fg_color")
+        current_fg = self.hero_status.cget("text_color")
+        self.hero_status.configure(text=f"●  {label}")
+        # Если оба цвета — валидные hex-строки, перетекаем плавно; иначе
+        # (например, при самом первом вызове) просто ставим цвет сразу.
+        if isinstance(current_bg, str) and current_bg.startswith("#") and isinstance(current_fg, str) and current_fg.startswith("#"):
+            def apply(t):
+                self.hero_status.configure(fg_color=self._lerp_hex(current_bg, bg, t), text_color=self._lerp_hex(current_fg, color, t))
+            self._tween(8, 8, apply)
+        else:
+            self.hero_status.configure(fg_color=bg, text_color=color)
+ 
+    def _on_mic_level(self, level: float) -> None:
+        """Коллбек из потока записи микрофона — просто складывает последний
+        уровень громкости, без блокировок (запись float атомарна в CPython).
+        Сглаживание и отрисовка происходят в animate() в главном потоке."""
+        self._mic_level_raw = level
+ 
     def _build_ui(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -118,6 +222,10 @@ class JarvisApp(ctk.CTk):
         self.nav_notes = self._nav_button("▤", "Заметки", lambda: self.show_page("notes"))
         self.nav_reminders = self._nav_button("◷", "Напоминания", lambda: self.show_page("reminders"))
         self.nav_settings = self._nav_button("⚙", "Настройки", lambda: self.show_page("settings"))
+        # Тонкая полоска-индикатор активного пункта — плавно скользит между
+        # кнопками вместо мгновенной подсветки. place() поверх pack()-сетки,
+        # это два независимых механизма раскладки в одном родителе.
+        self.nav_indicator = ctk.CTkFrame(self.sidebar, width=3, fg_color=ACCENT, corner_radius=2)
         ctk.CTkFrame(self.sidebar, height=1, fg_color=BORDER).pack(fill="x", padx=22, pady=20)
         self._label(self.sidebar, "СОСТОЯНИЕ СИСТЕМЫ", 10, MUTED, "bold").pack(anchor="w", padx=24, pady=(0, 10))
         self.dots = {}
@@ -129,7 +237,7 @@ class JarvisApp(ctk.CTk):
             dot.pack(side="right")
             self.dots[key] = dot
         self._label(self.sidebar, "OFFLINE-FIRST  •  WINDOWS", 9, MUTED, "bold").pack(side="bottom", anchor="w", padx=24, pady=22)
-
+ 
         self.content = ctk.CTkFrame(self, fg_color=BG)
         self.content.grid(row=0, column=1, sticky="nsew", padx=(4, 20), pady=18)
         self.content.grid_columnconfigure(0, weight=1)
@@ -139,7 +247,7 @@ class JarvisApp(ctk.CTk):
         self._build_reminders_page()
         self._build_settings_page()
         self.show_page("system")
-
+ 
     def _nav_button(self, icon, text, command):
         frame = ctk.CTkFrame(self.sidebar, fg_color="transparent", height=42, corner_radius=10)
         frame.pack(fill="x", padx=14, pady=2)
@@ -148,7 +256,7 @@ class JarvisApp(ctk.CTk):
         button = ctk.CTkButton(frame, text=text, anchor="w", fg_color="transparent", hover_color=PANEL_3, text_color=TEXT_2, font=self._font(12), height=38, corner_radius=9, command=command)
         button.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         return frame, button
-
+ 
     def _page(self, key):
         frame = ctk.CTkFrame(self.content, fg_color="transparent")
         frame.grid(row=0, column=0, sticky="nsew")
@@ -156,7 +264,7 @@ class JarvisApp(ctk.CTk):
         frame.grid_rowconfigure(1, weight=1)
         self._pages[key] = frame
         return frame
-
+ 
     def _build_system_page(self):
         p = self._page("system")
         header = ctk.CTkFrame(p, fg_color="transparent")
@@ -166,12 +274,12 @@ class JarvisApp(ctk.CTk):
         self._label(header, "Локальный голосовой интерфейс и управление системой", 12, MUTED).grid(row=1, column=0, sticky="w", pady=(3, 0))
         self.net_badge = ctk.CTkLabel(header, text="  ●  проверка сети  ", fg_color=PANEL, text_color=MUTED, corner_radius=12, font=self._font(11, "bold"))
         self.net_badge.grid(row=0, column=1, rowspan=2, sticky="e")
-
+ 
         body = ctk.CTkFrame(p, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(2, weight=1)
-
+ 
         hero = self._card(body)
         hero.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         hero.grid_columnconfigure(1, weight=1)
@@ -182,7 +290,7 @@ class JarvisApp(ctk.CTk):
         self.status_text.grid(row=1, column=1, sticky="nw", pady=(4, 20))
         self.hero_status = ctk.CTkLabel(hero, text="●  ИНИЦИАЛИЗАЦИЯ", text_color=WARN, fg_color="#2a2417", corner_radius=10, font=self._font(10, "bold"))
         self.hero_status.grid(row=0, column=2, rowspan=2, padx=24, pady=20, sticky="e")
-
+ 
         stats = ctk.CTkFrame(body, fg_color="transparent")
         stats.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         for i in range(3):
@@ -190,7 +298,7 @@ class JarvisApp(ctk.CTk):
         self._stat_card(stats, 0, "STT", "GigaAM v3", "Речь → текст")
         self._stat_card(stats, 1, "WAKE", "Джарвис", "Голосовая активация")
         self._stat_card(stats, 2, "TTS", ENGINES.get(str(self.settings.get("tts_engine", "coqui")), "Coqui XTTS-v2"), "Выбранный движок")
-
+ 
         console = self._card(body)
         console.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
         console.grid_rowconfigure(1, weight=1)
@@ -209,16 +317,16 @@ class JarvisApp(ctk.CTk):
         self.entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.entry.bind("<Return>", lambda _event: self.send())
         ctk.CTkButton(command, text="➜", width=52, height=48, corner_radius=11, fg_color=ACCENT, hover_color="#69b7ff", text_color="#07111b", font=self._font(18, "bold"), command=self.send).grid(row=0, column=1, padx=(0, 8))
-        self.mic = ctk.CTkButton(command, text="●", width=52, height=48, corner_radius=11, fg_color=PANEL_2, hover_color=PANEL_3, text_color=ACCENT, font=self._font(16, "bold"), command=self.mic_input, state="disabled")
+        self.mic = ctk.CTkButton(command, text="●", width=52, height=48, corner_radius=11, fg_color=PANEL_2, hover_color=PANEL_3, text_color=ACCENT, font=self._font(16, "bold"), command=self.mic_input, state="normal")
         self.mic.grid(row=0, column=2)
-
+ 
     def _stat_card(self, parent, column, title, value, subtitle):
         card = self._card(parent)
         card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 6, 6 if column < 2 else 0))
         self._label(card, title, 9, ACCENT, "bold").pack(anchor="w", padx=14, pady=(12, 2))
         self._label(card, value, 15, TEXT, "bold").pack(anchor="w", padx=14)
         self._label(card, subtitle, 10, MUTED).pack(anchor="w", padx=14, pady=(1, 11))
-
+ 
     def _build_notes_page(self):
         p = self._page("notes")
         header = ctk.CTkFrame(p, fg_color="transparent")
@@ -238,7 +346,7 @@ class JarvisApp(ctk.CTk):
         self.notes_box = ctk.CTkTextbox(card, fg_color="#0d141d", text_color=TEXT_2, corner_radius=10, font=self._font(12))
         self.notes_box.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self._refresh_notes()
-
+ 
     def _build_reminders_page(self):
         p = self._page("reminders")
         header = ctk.CTkFrame(p, fg_color="transparent")
@@ -261,7 +369,7 @@ class JarvisApp(ctk.CTk):
         self.reminders_box = ctk.CTkTextbox(card, fg_color="#0d141d", text_color=TEXT_2, corner_radius=10, font=self._font(12))
         self.reminders_box.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self._refresh_reminders()
-
+ 
     def _build_settings_page(self):
         p = self._page("settings")
         header = ctk.CTkFrame(p, fg_color="transparent")
@@ -271,7 +379,7 @@ class JarvisApp(ctk.CTk):
         scroll = ctk.CTkScrollableFrame(p, fg_color="transparent", scrollbar_button_color=BORDER, scrollbar_button_hover_color=ACCENT_SOFT)
         scroll.grid(row=1, column=0, sticky="nsew")
         scroll.grid_columnconfigure(0, weight=1)
-
+ 
         self._label(scroll, "ПРОИЗВОДИТЕЛЬНОСТЬ", 11, ACCENT, "bold").grid(row=0, column=0, sticky="w", padx=4, pady=(2, 8))
         perf = self._card(scroll)
         perf.grid(row=1, column=0, sticky="ew", pady=(0, 14))
@@ -280,7 +388,7 @@ class JarvisApp(ctk.CTk):
         current = str(self.settings.get("performance_mode", "balanced"))
         self.mode = tk.StringVar(value=MODES.get(current, MODES["balanced"])[0])
         self._option(perf, self.mode, [v[0] for v in MODES.values()], width=250, command=lambda _v: None).pack(anchor="w", padx=16, pady=(0, 15))
-
+ 
         self._label(scroll, "ОНЛАЙН-ОТВЕТЫ", 11, ACCENT, "bold").grid(row=2, column=0, sticky="w", padx=4, pady=(0, 8))
         online = self._card(scroll)
         online.grid(row=3, column=0, sticky="ew", pady=(0, 14))
@@ -294,7 +402,7 @@ class JarvisApp(ctk.CTk):
         self.gmodel = self._field(online)
         self.gmodel.insert(0, self.settings.get("groq_model", "openai/gpt-oss-120b"))
         self.gmodel.grid(row=1, column=1, sticky="ew", padx=(8, 16), pady=(0, 14))
-
+ 
         self._label(scroll, "ГОЛОС JARVIS", 11, ACCENT, "bold").grid(row=4, column=0, sticky="w", padx=4, pady=(0, 8))
         voice = self._card(scroll)
         voice.grid(row=5, column=0, sticky="ew", pady=(0, 14))
@@ -314,7 +422,7 @@ class JarvisApp(ctk.CTk):
         self._make_eleven_panel()
         self._make_silero_panel()
         self._show_engine(engine_key)
-
+ 
         self._label(scroll, "ГОЛОСОВАЯ АКТИВАЦИЯ", 11, ACCENT, "bold").grid(row=6, column=0, sticky="w", padx=4, pady=(0, 8))
         wake = self._card(scroll)
         wake.grid(row=7, column=0, sticky="ew", pady=(0, 18))
@@ -323,7 +431,7 @@ class JarvisApp(ctk.CTk):
         self.wake = tk.BooleanVar(value=bool(self.settings.get("wake_word_enabled", True)))
         ctk.CTkCheckBox(wake, text="Включить голосовую активацию", variable=self.wake, text_color=TEXT, hover_color=ACCENT_SOFT, fg_color=ACCENT, border_color="#4b6178").pack(anchor="w", padx=16, pady=(0, 14))
         ctk.CTkButton(p, text="Сохранить настройки", width=150, height=38, corner_radius=10, fg_color=ACCENT, hover_color="#69b7ff", text_color="#07111b", font=self._font(11, "bold"), command=self.save).place(relx=0.99, rely=0.99, anchor="se")
-
+ 
     def _make_coqui_panel(self):
         self.coqui_panel = ctk.CTkFrame(self.tts_stack, fg_color="transparent")
         self.coqui_panel.grid_columnconfigure(0, weight=1)
@@ -342,7 +450,7 @@ class JarvisApp(ctk.CTk):
         self.clang.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 10))
         self.csplit = tk.BooleanVar(value=bool(self.settings.get("xtts_split_sentences", True)))
         ctk.CTkCheckBox(self.coqui_panel, text="Разбивать длинные ответы на предложения", variable=self.csplit, text_color=TEXT_2, hover_color=ACCENT_SOFT, fg_color=ACCENT).grid(row=5, column=0, sticky="w", padx=14, pady=(0, 14))
-
+ 
     def _make_eleven_panel(self):
         self.eleven_panel = ctk.CTkFrame(self.tts_stack, fg_color="transparent")
         self.eleven_panel.grid_columnconfigure(0, weight=1)
@@ -358,7 +466,7 @@ class JarvisApp(ctk.CTk):
         self._label(self.eleven_panel, "Модель", 10, MUTED).grid(row=2, column=0, sticky="w", padx=14, pady=(0, 4))
         self.emodel = tk.StringVar(value=self.settings.get("elevenlabs_model", "eleven_multilingual_v2"))
         self._option(self.eleven_panel, self.emodel, ["eleven_multilingual_v2", "eleven_flash_v2_5"], width=260).grid(row=3, column=0, sticky="w", padx=14, pady=(0, 14))
-
+ 
     def _make_silero_panel(self):
         self.silero_panel = ctk.CTkFrame(self.tts_stack, fg_color="transparent")
         self.silero_panel.grid_columnconfigure(0, weight=1)
@@ -372,29 +480,29 @@ class JarvisApp(ctk.CTk):
         self._option(self.silero_panel, self.sdev, ["cpu", "cuda"], width=130).grid(row=1, column=1, sticky="w", padx=7, pady=(0, 10))
         self.srate = tk.StringVar(value=str(self.settings.get("silero_sample_rate", 48000)))
         self._option(self.silero_panel, self.srate, ["24000", "48000"], width=150).grid(row=2, column=0, sticky="w", padx=14, pady=(0, 14))
-
+ 
     def _load_masked_key(self, entry, value):
         if value:
             entry.insert(0, "•" * 16)
-
+ 
     def _engine_changed(self, displayed):
         reverse = {label: key for key, label in ENGINES.items()}
         self._show_engine(reverse.get(displayed, "coqui"))
-
+ 
     def _show_engine(self, key):
         for panel in (self.coqui_panel, self.eleven_panel, self.silero_panel):
             panel.grid_remove()
         panel = {"coqui": self.coqui_panel, "elevenlabs": self.eleven_panel, "silero": self.silero_panel}.get(key, self.coqui_panel)
         panel.grid(row=0, column=0, sticky="ew")
-
+ 
     def _current_mode_key(self):
         displayed = self.mode.get()
         return next((key for key, value in MODES.items() if value[0] == displayed), "balanced")
-
+ 
     def _current_speaker_key(self):
         displayed = self.speaker.get()
         return next((key for key, label in SILERO_SPEAKERS.items() if label == displayed), "eugene")
-
+ 
     def save(self):
         groq_value = self.groq.get().strip()
         if groq_value and groq_value != "•" * 16:
@@ -422,14 +530,29 @@ class JarvisApp(ctk.CTk):
         jarvis_core.reset_groq_client()
         self._show_toast("✓  Настройки сохранены")
         self._update_status_indicators()
-
+        if self.settings["wake_word_enabled"]:
+            if self.models_ready:
+                self.start_wake()
+            else:
+                self._start_model_load()
+        else:
+            self._stop_wake()
+ 
     def _show_toast(self, text):
         if hasattr(self, "toast") and self.toast.winfo_exists():
             self.toast.destroy()
         self.toast = ctk.CTkLabel(self, text=text, fg_color="#173328", text_color=GOOD, corner_radius=12, font=self._font(11, "bold"))
-        self.toast.place(relx=0.98, rely=0.92, anchor="e")
+        # Выезжает снизу вверх вместо мгновенного появления.
+        target_rely = 0.92
+        start_rely = 1.05
+        self.toast.place(relx=0.98, rely=start_rely, anchor="e")
+ 
+        def apply(t):
+            if self.toast.winfo_exists():
+                self.toast.place(relx=0.98, rely=start_rely + (target_rely - start_rely) * t, anchor="e")
+        self._tween(8, 8, apply)
         self.after(2200, lambda: self.toast.destroy() if self.toast.winfo_exists() else None)
-
+ 
     # ---------- Notes / reminders ----------
     def _refresh_notes(self):
         notes = load_notes()
@@ -438,7 +561,7 @@ class JarvisApp(ctk.CTk):
         self.notes_box.delete("1.0", "end")
         self.notes_box.insert("1.0", "\n".join(lines) if lines else "Заметок пока нет.")
         self.notes_box.configure(state="disabled")
-
+ 
     def add_note_gui(self):
         text = self.note_entry.get().strip()
         if not text:
@@ -450,7 +573,7 @@ class JarvisApp(ctk.CTk):
             self.log_add("JARVIS", f"Заметка сохранена: {text}")
         except Exception as exc:
             self.log_add("ОШИБКА", str(exc))
-
+ 
     def _refresh_reminders(self):
         reminders = load_reminders()
         lines = []
@@ -465,7 +588,7 @@ class JarvisApp(ctk.CTk):
         self.reminders_box.delete("1.0", "end")
         self.reminders_box.insert("1.0", "\n".join(lines) if lines else "Активных напоминаний нет.")
         self.reminders_box.configure(state="disabled")
-
+ 
     def add_reminder_gui(self):
         text = self.reminder_entry.get().strip()
         when = self.reminder_when.get().strip()
@@ -479,25 +602,25 @@ class JarvisApp(ctk.CTk):
             self.log_add("JARVIS", f"Напоминание поставлено: {reminder['text']}")
         except Exception as exc:
             self.log_add("ОШИБКА", str(exc))
-
+ 
     def _on_reminder(self, reminder):
         text = reminder.get("text", "")
         self.after(0, lambda: self._refresh_reminders())
         self.after(0, lambda: self._show_reminder_toast(text))
         self.log_add("НАПОМИНАНИЕ", text)
         threading.Thread(target=self._speak_reminder, args=(text,), daemon=True).start()
-
+ 
     def _show_reminder_toast(self, text):
         toast = ctk.CTkLabel(self, text=f"🔔  Напоминание: {text}", fg_color="#2a2417", text_color=WARN, corner_radius=12, font=self._font(12, "bold"), wraplength=420)
         toast.place(relx=0.98, rely=0.08, anchor="ne")
         self.after(7000, lambda: toast.destroy() if toast.winfo_exists() else None)
-
+ 
     def _speak_reminder(self, text):
         try:
             jarvis_tts.speak(f"Напоминание. {text}")
         except Exception as exc:
             print(f"[Reminders] Ошибка озвучки: {exc}")
-
+ 
     # ---------- Runtime ----------
     def show_page(self, key):
         for page in self._pages.values():
@@ -506,7 +629,26 @@ class JarvisApp(ctk.CTk):
         for name, nav in (("system", self.nav_system), ("notes", self.nav_notes), ("reminders", self.nav_reminders), ("settings", self.nav_settings)):
             frame, button = nav
             button.configure(fg_color=PANEL_3 if name == key else "transparent", text_color=TEXT if name == key else TEXT_2)
-
+            if name == key:
+                self._move_nav_indicator(frame)
+ 
+    def _move_nav_indicator(self, frame, animate=True):
+        frame.update_idletasks()
+        target_y = frame.winfo_y()
+        height = frame.winfo_height() or 42
+        self.nav_indicator.configure(height=max(20, height - 12))
+        start_y = getattr(self, "_nav_indicator_y", None)
+        if not animate or start_y is None:
+            self.nav_indicator.place(x=0, y=target_y + 6)
+            self._nav_indicator_y = target_y
+            return
+ 
+        def apply(t):
+            y = start_y + (target_y - start_y) * t
+            self.nav_indicator.place(x=0, y=y)
+        self._tween(8, 8, apply)
+        self._nav_indicator_y = target_y
+ 
     def _update_network(self):
         try:
             online = bool(is_online())
@@ -514,21 +656,25 @@ class JarvisApp(ctk.CTk):
             online = False
         self.net_badge.configure(text="  ●  ONLINE  " if online else "  ●  OFFLINE  ", text_color=GOOD if online else MUTED, fg_color="#12261c" if online else PANEL)
         self.after(8000, self._update_network)
-
+ 
     def _update_status_indicators(self):
         self.dot("groq", bool(get_groq_api_key(self.settings)))
         self.dot("xtts", jarvis_tts.is_configured())
-
+ 
     def status_set(self, text):
         self.after(0, lambda: self.status_text.configure(text=text))
-
+ 
     def dot(self, key, value):
         if key in self.dots:
             self.after(0, lambda: self.dots[key].configure(text_color=GOOD if value else BAD))
-
+ 
     def load_models(self):
+        if self._models_loading or self.models_ready:
+            return
+        self._models_loading = True
         try:
             self.status_set("Загрузка GigaAM и VAD...")
+            self.after(0, lambda: self._set_state("thinking", label_override="ЗАГРУЗКА"))
             jarvis_voice.warmup_voice_models()
             self.dot("gigaAM", True)
             self.dot("local", True)
@@ -537,7 +683,7 @@ class JarvisApp(ctk.CTk):
             self.after(0, lambda: self.mic.configure(state="normal"))
             self.models_ready = True
             self.status_set("Система готова к работе")
-            self.after(0, lambda: self.hero_status.configure(text="●  READY", text_color=GOOD, fg_color="#12261c"))
+            self.after(0, self._set_state, "idle")
             try:
                 jarvis_voice.play_sound(jarvis_voice.SOUND_RUN)
             except Exception:
@@ -547,9 +693,11 @@ class JarvisApp(ctk.CTk):
         except Exception as exc:
             print(f"[JARVIS] Ошибка запуска: {exc}")
             self.status_set("Ошибка загрузки компонентов")
-            self.after(0, lambda: self.hero_status.configure(text="●  ERROR", text_color=BAD, fg_color="#2b171b"))
+            self.after(0, self._set_state, "error")
             self.dot("gigaAM", False)
-
+        finally:
+            self._models_loading = False
+ 
     def start_wake(self):
         if self.wake_detector is not None or not self.models_ready:
             return
@@ -563,7 +711,7 @@ class JarvisApp(ctk.CTk):
         except Exception as exc:
             print(f"[WakeWord] {exc}")
             self.dot("wake", False)
-
+ 
     def _stop_wake(self):
         detector = self.wake_detector
         self.wake_detector = None
@@ -573,15 +721,15 @@ class JarvisApp(ctk.CTk):
             except Exception as exc:
                 print(f"[WakeWord] stop: {exc}")
         self.dot("wake", False)
-
+ 
     def path(self, value):
         return value if os.path.isabs(value) else os.path.join(str(PROJECT_DIR), value)
-
+ 
     def wake_detect(self):
         if self.models_ready and not self._wake_running:
             self._wake_running = True
             threading.Thread(target=self.voice_reply, daemon=True).start()
-
+ 
     def voice_reply(self):
         try:
             self.after(0, lambda: self.mic.configure(state="disabled"))
@@ -591,34 +739,68 @@ class JarvisApp(ctk.CTk):
             except Exception:
                 pass
             self.status_set("Слушаю...")
-            result = jarvis_voice.listen()
+            self._mic_level_raw = 0.0
+            self.after(0, self._set_state, "listening")
+            result = jarvis_voice.listen(on_level=self._on_mic_level)
+            self._mic_level_raw = 0.0
+            self.after(0, self._set_state, "thinking")
             self.status_set("Распознаю речь...")
             text = result.get("text", "")
             grammar = result.get("grammar_text")
             if text or grammar:
                 self.process(text, grammar)
+            else:
+                self.after(0, self._set_state, "idle")
         except Exception as exc:
             self.log_add("ОШИБКА", str(exc))
+            self.after(0, self._set_state, "error")
         finally:
             self._wake_running = False
             self.after(0, lambda: self.mic.configure(state="normal" if self.models_ready else "disabled"))
             if self.models_ready and self.settings.get("wake_word_enabled"):
                 self.start_wake()
-
+ 
     def send(self):
         text = self.entry.get().strip()
         self.entry.delete(0, "end")
-        if text and self.models_ready:
+        if text:
+            # Текстовые команды не требуют GigaAM/VAD — их можно обрабатывать
+            # сразу, не дожидаясь загрузки голосового стека.
             threading.Thread(target=self.process, args=(text,), daemon=True).start()
-
+ 
     def mic_input(self):
         if self.models_ready:
             threading.Thread(target=self.voice_reply, daemon=True).start()
-
+        elif not self._models_loading:
+            threading.Thread(target=self._load_models_then_listen, daemon=True).start()
+ 
+    def _load_models_then_listen(self):
+        self.after(0, lambda: self.mic.configure(state="disabled"))
+        self.load_models()
+        if self.models_ready:
+            self.voice_reply()
+        else:
+            self.after(0, lambda: self.mic.configure(state="normal"))
+ 
+    def _start_model_load(self):
+        if self._models_loading or self.models_ready:
+            return
+        threading.Thread(target=self.load_models, daemon=True).start()
+ 
+    def _speak(self, text):
+        """Обёртка над jarvis_tts.speak(), которая включает состояние
+        'ГОВОРЮ' на время воспроизведения и возвращает в 'READY' после."""
+        self.after(0, self._set_state, "speaking")
+        try:
+            jarvis_tts.speak(text)
+        finally:
+            self.after(0, self._set_state, "idle")
+ 
     def process(self, text, grammar=None):
         try:
             self.status_set("Обрабатываю запрос...")
-            result = jarvis_core.process_message(text, grammar_text=grammar, on_speak_ready=lambda value: jarvis_tts.speak(value))
+            self.after(0, self._set_state, "thinking")
+            result = jarvis_core.process_message(text, grammar_text=grammar, on_speak_ready=lambda value: self._speak(value))
             self.log_add("ВЫ", text)
             self.log_add("JARVIS", result.get("text", ""))
             if result.get("type") == "sound":
@@ -626,48 +808,125 @@ class JarvisApp(ctk.CTk):
             elif result.get("type") == "local":
                 jarvis_voice.play_random_ok()
             elif result.get("type") != "streamed":
-                jarvis_tts.speak(result.get("text", ""))
+                self._speak(result.get("text", ""))
         except Exception as exc:
             self.status_set("Ошибка")
             self.log_add("ОШИБКА", str(exc))
+            self.after(0, self._set_state, "error")
         finally:
             self.status_set("Система готова к работе")
             self.after(0, lambda: self.mic.configure(state="normal" if self.models_ready else "disabled"))
             self.after(0, self._refresh_reminders)
-
+            self.after(0, self._set_state, "idle")
+ 
+    LOG_MAX_LINES = 600
+ 
     def log_add(self, author, text):
         def update():
             if not hasattr(self, "log") or not self.log.winfo_exists():
                 return
             self.log.configure(state="normal")
             self.log.insert("end", f"{author}\n{text}\n\n")
+            # Textbox иначе растёт бесконечно в течение долгой сессии —
+            # держим только последние LOG_MAX_LINES строк.
+            line_count = int(self.log.index("end-1c").split(".")[0])
+            if line_count > self.LOG_MAX_LINES:
+                self.log.delete("1.0", f"{line_count - self.LOG_MAX_LINES}.0")
             self.log.see("end")
             self.log.configure(state="disabled")
         self.after(0, update)
-
+ 
+    _ANIM_RINGS = (58, 49, 38)
+    _ANIM_ANGLES = tuple(range(0, 360, 45))
+    _BAR_COUNT = 28
+    _BAR_BASE_R = 44
+    _BAR_MAX_EXTRA = 34
+ 
+    def _init_anim_base(self, canvas):
+        # Центральное свечение и буква "J" — общие для всех состояний,
+        # создаются один раз за всё время работы окна.
+        canvas.create_oval(28, 28, 114, 114, fill="#162f49", outline="", tags="base")
+        canvas.create_text(71, 71, text="J", fill=ACCENT, font=("Segoe UI", 38, "bold"), tags="base")
+        self._anim_base_ready = True
+ 
+    def _rebuild_outer(self, mode):
+        # "Внешний" слой визуализатора зависит от состояния (idle/listening/
+        # thinking/speaking/error) и целиком пересоздаётся только при смене
+        # состояния — это редкое событие, а не 11 раз в секунду.
+        c = self.core_canvas
+        c.delete("outer")
+        items = []
+        if mode in ("idle", "error"):
+            outer_c = BAD if mode == "error" else "#2b5d85"
+            inner_c = BAD if mode == "error" else "#203b55"
+            spoke_c = BAD if mode == "error" else ACCENT
+            items = [c.create_oval(0, 0, 0, 0, outline=inner_c if i else outer_c, width=2, tags="outer") for i in range(len(self._ANIM_RINGS))]
+            items += [c.create_line(0, 0, 0, 0, fill=spoke_c, width=2, tags="outer") for _ in self._ANIM_ANGLES]
+        elif mode in ("listening", "speaking"):
+            color = ACCENT if mode == "listening" else GOOD
+            items = [c.create_line(0, 0, 0, 0, fill=color, width=3, capstyle="round", tags="outer") for _ in range(self._BAR_COUNT)]
+        elif mode == "thinking":
+            items = [c.create_arc(16, 16, 126, 126, start=0, extent=100, style="arc", outline=WARN, width=4, tags="outer")]
+        self._outer_items = items
+        self._built_mode = mode
+ 
+    def _sample_tts_level(self) -> float:
+        """Реальная громкость того, что JARVIS сейчас произносит — читает
+        уже посчитанный буфер воспроизведения, без отдельного аудио-потока."""
+        info = jarvis_tts.get_now_playing()
+        audio = info.get("audio")
+        samplerate = info.get("samplerate")
+        if audio is None or not samplerate:
+            return 0.0
+        elapsed = time.monotonic() - info["started_at"]
+        idx = int(elapsed * samplerate)
+        half_window = max(1, samplerate // 40)
+        start = max(0, idx - half_window)
+        end = min(len(audio), idx + half_window)
+        if start >= end:
+            return 0.0
+        level = float(np.sqrt(np.mean(np.square(audio[start:end]))))
+        return min(1.0, level * 6.0)
+ 
     def animate(self):
-        self._anim_step = (self._anim_step + 1) % 120
+        self._anim_step = (self._anim_step + 1) % 3600
         if hasattr(self, "core_canvas") and self.core_canvas.winfo_exists():
             c = self.core_canvas
-            c.delete("all")
+            if not getattr(self, "_anim_base_ready", False):
+                self._init_anim_base(c)
+            mode = self._visual_state
+            if mode != getattr(self, "_built_mode", None):
+                self._rebuild_outer(mode)
             cx = cy = 71
-            pulse = 1.0 + 0.04 * ((self._anim_step % 30) / 30.0)
-            rings = (58, 49, 38)
-            for i, radius in enumerate(rings):
-                r = radius * pulse
-                c.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#203b55" if i else "#2b5d85", width=2)
-            for angle in range(0, 360, 45):
-                import math
-                rad = math.radians(angle + self._anim_step * 1.5)
-                x1 = cx + 53 * math.cos(rad)
-                y1 = cy + 53 * math.sin(rad)
-                x2 = cx + 58 * math.cos(rad)
-                y2 = cy + 58 * math.sin(rad)
-                c.create_line(x1, y1, x2, y2, fill="#4aa8ff", width=2)
-            c.create_oval(28, 28, 114, 114, fill="#162f49", outline="")
-            c.create_text(cx, cy, text="J", fill=ACCENT, font=("Segoe UI", 38, "bold"))
+            if mode in ("idle", "error"):
+                pulse = 1.0 + 0.04 * ((self._anim_step % 30) / 30.0)
+                rings = self._outer_items[:len(self._ANIM_RINGS)]
+                spokes = self._outer_items[len(self._ANIM_RINGS):]
+                for item_id, radius in zip(rings, self._ANIM_RINGS):
+                    r = radius * pulse
+                    c.coords(item_id, cx - r, cy - r, cx + r, cy + r)
+                spin = self._anim_step * (0.3 if mode == "error" else 1.5)
+                for item_id, angle in zip(spokes, self._ANIM_ANGLES):
+                    rad = math.radians(angle + spin)
+                    x1, y1 = cx + 53 * math.cos(rad), cy + 53 * math.sin(rad)
+                    x2, y2 = cx + 58 * math.cos(rad), cy + 58 * math.sin(rad)
+                    c.coords(item_id, x1, y1, x2, y2)
+            elif mode in ("listening", "speaking"):
+                target = min(1.0, self._mic_level_raw * 9.0) if mode == "listening" else self._sample_tts_level()
+                self._mic_level += (target - self._mic_level) * 0.35
+                for i, item_id in enumerate(self._outer_items):
+                    angle = (360 / self._BAR_COUNT) * i
+                    wobble = 0.5 + 0.5 * math.sin(self._anim_step * 0.2 + i * 0.8)
+                    extra = self._BAR_MAX_EXTRA * self._mic_level * (0.4 + 0.6 * wobble)
+                    r1, r2 = self._BAR_BASE_R, self._BAR_BASE_R + 4 + extra
+                    rad = math.radians(angle)
+                    x1, y1 = cx + r1 * math.cos(rad), cy + r1 * math.sin(rad)
+                    x2, y2 = cx + r2 * math.cos(rad), cy + r2 * math.sin(rad)
+                    c.coords(item_id, x1, y1, x2, y2)
+            elif mode == "thinking":
+                c.itemconfig(self._outer_items[0], start=(self._anim_step * 6) % 360)
         self.after(90, self.animate)
-
+ 
     def on_close(self):
         try:
             self.reminder_stop.set()
@@ -679,7 +938,7 @@ class JarvisApp(ctk.CTk):
         except Exception:
             pass
         self.destroy()
-
-
+ 
+ 
 if __name__ == "__main__":
     JarvisApp().mainloop()

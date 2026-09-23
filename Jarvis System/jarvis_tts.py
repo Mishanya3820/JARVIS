@@ -1,19 +1,20 @@
 from __future__ import annotations
-
+ 
 import os
 import threading
+import time
 from pathlib import Path
-
+ 
 from jarvis_paths import PROJECT_DIR, SILERO_MODELS_DIR, TTS_MODELS_DIR, setup_environment
-
+ 
 setup_environment()
 os.environ["TTS_HOME"] = str(TTS_MODELS_DIR)
-
+ 
 import numpy as np
 import sounddevice as sd
-
+ 
 from jarvis_settings import get_elevenlabs_api_key, load_settings
-
+ 
 _tts = None
 _silero = None
 _tts_lock = threading.Lock()
@@ -27,14 +28,14 @@ _SILERO_MODEL_URLS = {
     "v5_4_ru": "https://models.silero.ai/models/tts/ru/v5_4_ru.pt",
     "v5_ru": "https://models.silero.ai/models/tts/ru/v5_ru.pt",
 }
-
-
+ 
+ 
 def _resolve_path(path: str) -> str:
     if os.path.isabs(path):
         return path
     return os.path.join(str(PROJECT_DIR), path)
-
-
+ 
+ 
 def _get_device() -> str:
     global _torch
     settings = load_settings()
@@ -47,8 +48,8 @@ def _get_device() -> str:
             return "cuda"
         print("[XTTS] CUDA недоступна, использую CPU.")
     return "cpu"
-
-
+ 
+ 
 def _get_speaker_wavs() -> list[str]:
     settings = load_settings()
     raw = settings.get("xtts_speaker_wav", "resources/tts/jarvis_voice.wav")
@@ -63,16 +64,16 @@ def _get_speaker_wavs() -> list[str]:
         else:
             print(f"[XTTS] WAV-образец не найден: {path}")
     return paths
-
-
+ 
+ 
 def model_directory() -> str:
     return str(TTS_MODELS_DIR)
-
-
+ 
+ 
 def silero_model_directory() -> str:
     return str(SILERO_MODELS_DIR)
-
-
+ 
+ 
 def _get_coqui_model():
     global _tts, _TTS_CLASS, _torch
     if _tts is None:
@@ -90,8 +91,8 @@ def _get_coqui_model():
                 _tts = _TTS_CLASS(_MODEL_NAME).to(device)
                 print("[XTTS] Модель загружена.")
     return _tts
-
-
+ 
+ 
 def _get_silero_model():
     global _silero
     if _silero is None:
@@ -109,7 +110,7 @@ def _get_silero_model():
                     import torch
                     if device == "cuda" and not torch.cuda.is_available():
                         device = "cpu"
-
+ 
                     if not model_path.is_file():
                         print(f"[Silero] Модель {model_id} не найдена локально.")
                         print(f"[Silero] Скачиваю модель в {model_path}...")
@@ -119,7 +120,7 @@ def _get_silero_model():
                             str(model_path),
                             progress=True,
                         )
-
+ 
                     print(f"[Silero] Загружаю {model_id} / {speaker} на {device}...")
                     model = torch.package.PackageImporter(str(model_path)).load_pickle("tts_models", "model")
                     model.to(device)
@@ -130,8 +131,8 @@ def _get_silero_model():
                 except Exception as exc:
                     raise RuntimeError(f"Не удалось загрузить Silero TTS: {exc}") from exc
     return _silero
-
-
+ 
+ 
 def _speak_coqui(text: str, settings: dict) -> None:
     speaker_wavs = _get_speaker_wavs()
     if not speaker_wavs:
@@ -140,15 +141,15 @@ def _speak_coqui(text: str, settings: dict) -> None:
     split_sentences = bool(settings.get("xtts_split_sentences", True))
     audio = _get_coqui_model().tts(text=text, speaker_wav=speaker_wavs, language=language, split_sentences=split_sentences)
     _play_pcm_float(audio, 24000, int(settings.get("xtts_playback_padding_ms", 80)))
-
-
+ 
+ 
 def _speak_silero(text: str, settings: dict) -> None:
     model, speaker, _device = _get_silero_model()
     sample_rate = int(settings.get("silero_sample_rate", 48000))
     audio = model.apply_tts(text=text, speaker=speaker, sample_rate=sample_rate)
     _play_pcm_float(audio, sample_rate, int(settings.get("silero_playback_padding_ms", 40)))
-
-
+ 
+ 
 def _get_elevenlabs_client():
     api_key = get_elevenlabs_api_key()
     if not api_key:
@@ -158,8 +159,8 @@ def _get_elevenlabs_client():
     except ImportError as exc:
         raise RuntimeError("Не установлен пакет elevenlabs. Установи: pip install elevenlabs") from exc
     return ElevenLabs(api_key=api_key)
-
-
+ 
+ 
 def _speak_elevenlabs(text: str, settings: dict) -> None:
     voice_id = str(settings.get("elevenlabs_voice_id", "")).strip()
     if not voice_id:
@@ -175,22 +176,43 @@ def _speak_elevenlabs(text: str, settings: dict) -> None:
         _play_pcm_float(audio_np, 24000, int(settings.get("xtts_playback_padding_ms", 80)))
     else:
         raise RuntimeError("Для JARVIS сейчас используется только pcm_24000 для ElevenLabs.")
-
-
+ 
+ 
+_now_playing_lock = threading.Lock()
+_now_playing = {"audio": None, "samplerate": 0, "started_at": 0.0}
+ 
+ 
+def get_now_playing() -> dict:
+    """Снимок сейчас проигрываемого буфера — для живой визуализации речи
+    JARVIS в GUI. Ничего не пересчитывает и не влияет на воспроизведение,
+    просто отдаёт то, что уже лежит в памяти."""
+    with _now_playing_lock:
+        return dict(_now_playing)
+ 
+ 
 def _play_pcm_float(audio, samplerate: int, padding_ms: int) -> None:
     audio_np = np.asarray(audio, dtype=np.float32).reshape(-1)
     if audio_np.size == 0:
         raise RuntimeError("TTS вернул пустой аудиопоток.")
     padding = np.zeros(max(0, int(samplerate * padding_ms / 1000)), dtype=np.float32)
-    sd.play(np.concatenate((padding, audio_np, padding)), samplerate=samplerate)
-    sd.wait()
-
-
+    full = np.concatenate((padding, audio_np, padding))
+    with _now_playing_lock:
+        _now_playing["audio"] = full
+        _now_playing["samplerate"] = samplerate
+        _now_playing["started_at"] = time.monotonic()
+    try:
+        sd.play(full, samplerate=samplerate)
+        sd.wait()
+    finally:
+        with _now_playing_lock:
+            _now_playing["audio"] = None
+ 
+ 
 def get_engine() -> str:
     engine = str(load_settings().get("tts_engine", "coqui")).strip().lower()
     return engine if engine in {"coqui", "elevenlabs", "silero"} else "coqui"
-
-
+ 
+ 
 def is_configured() -> bool:
     settings = load_settings()
     engine = get_engine()
@@ -199,8 +221,8 @@ def is_configured() -> bool:
     if engine == "silero":
         return True
     return bool(_get_speaker_wavs())
-
-
+ 
+ 
 def warmup() -> None:
     settings = load_settings()
     engine = get_engine()
@@ -210,8 +232,8 @@ def warmup() -> None:
         _get_silero_model()
     elif engine == "elevenlabs" and get_elevenlabs_api_key(settings) and str(settings.get("elevenlabs_voice_id", "")).strip():
         _get_elevenlabs_client()
-
-
+ 
+ 
 def speak(text: str) -> None:
     text = (text or "").strip()
     if not text:
