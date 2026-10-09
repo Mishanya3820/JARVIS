@@ -208,6 +208,19 @@
             </select>
           </div>
 
+          <div class="engine-panel hidden" id="panel-fish_audio">
+            <div class="field-hint">API-ключ Fish Audio</div>
+            <input id="fkey" type="password" placeholder="Введите новый ключ для замены">
+            <div class="field-hint" style="margin-top:10px;">Voice / Reference ID</div>
+            <input id="fvoice" type="text" placeholder="ID голосовой модели Fish Audio">
+            <div class="field-hint" style="margin-top:10px;">Модель</div>
+            <select id="fmodel" class="select">
+              <option value="s2.1-pro">s2.1-pro</option>
+              <option value="s2-pro">s2-pro</option>
+            </select>
+            <div class="field-hint" style="margin-top:10px;">Для генерации речи нужен интернет и доступный лимит Fish Audio. Бесплатные квоты и цены зависят от аккаунта и выбранной модели.</div>
+          </div>
+
           <div class="engine-panel hidden" id="panel-silero">
             <div class="two-col">
               <div>
