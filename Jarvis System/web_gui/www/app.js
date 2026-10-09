@@ -398,11 +398,14 @@ const csplit = document.getElementById("csplit");
 const ekey = document.getElementById("ekey");
 const evoice = document.getElementById("evoice");
 const emodel = document.getElementById("emodel");
+const fkey = document.getElementById("fkey");
+const fvoice = document.getElementById("fvoice");
+const fmodel = document.getElementById("fmodel");
 const speakerSelect = document.getElementById("speaker");
 const sdev = document.getElementById("sdev");
 const srate = document.getElementById("srate");
 
-const ENGINE_PANELS = { coqui: "panel-coqui", elevenlabs: "panel-elevenlabs", silero: "panel-silero" };
+const ENGINE_PANELS = { coqui: "panel-coqui", elevenlabs: "panel-elevenlabs", fish_audio: "panel-fish_audio", silero: "panel-silero" };
 const MASK = "•".repeat(16);
 
 function showEnginePanel(key) {
@@ -436,6 +439,9 @@ function applyBootstrap(data) {
   ekey.value = data.eleven_key_set ? MASK : "";
   evoice.value = st.elevenlabs_voice_id;
   emodel.value = st.elevenlabs_model;
+  fkey.value = data.fish_audio_key_set ? MASK : "";
+  fvoice.value = st.fish_audio_voice_id || "";
+  fmodel.value = st.fish_audio_model || "s2.1-pro";
 
   cwav.value = st.xtts_speaker_wav;
   cdev.value = st.xtts_device;
@@ -466,6 +472,9 @@ saveBtn.addEventListener("click", async () => {
     elevenlabs_api_key: ekey.value.trim(),
     elevenlabs_voice_id: evoice.value.trim(),
     elevenlabs_model: emodel.value,
+    fish_audio_api_key: fkey.value.trim(),
+    fish_audio_voice_id: fvoice.value.trim(),
+    fish_audio_model: fmodel.value,
     silero_speaker: speakerSelect.value,
     silero_device: sdev.value,
     silero_sample_rate: parseInt(srate.value, 10),
