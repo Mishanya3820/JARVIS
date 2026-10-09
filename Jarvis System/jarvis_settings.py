@@ -19,6 +19,9 @@ DEFAULT_SETTINGS = {
     "elevenlabs_voice_id": "",
     "elevenlabs_model": "eleven_multilingual_v2",
     "elevenlabs_output_format": "pcm_24000",
+    "fish_audio_api_key": "",
+    "fish_audio_voice_id": "",
+    "fish_audio_model": "s2.1-pro",
     "silero_model": "v5_5_ru",
     "silero_speaker": "eugene",
     "silero_device": "cpu",
@@ -34,6 +37,7 @@ DEFAULT_SETTINGS = {
 TTS_ENGINES = {
     "coqui": "Coqui XTTS-v2",
     "elevenlabs": "ElevenLabs",
+    "fish_audio": "Fish Audio",
     "silero": "Silero TTS",
 }
 
@@ -102,6 +106,18 @@ def get_elevenlabs_api_key(settings: dict | None = None) -> str:
 
 def has_elevenlabs_api_key(settings: dict | None = None) -> bool:
     return bool(get_elevenlabs_api_key(settings))
+
+
+def get_fish_audio_api_key(settings: dict | None = None) -> str:
+    env_key = os.environ.get("FISH_AUDIO_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    settings = settings or load_settings()
+    return (settings.get("fish_audio_api_key") or "").strip()
+
+
+def has_fish_audio_api_key(settings: dict | None = None) -> bool:
+    return bool(get_fish_audio_api_key(settings))
 
 
 def get_performance_mode(settings: dict | None = None) -> str:
