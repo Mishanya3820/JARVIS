@@ -13,3 +13,6 @@ transformers>=4.57.6
 psutil>=6.0.0
 elevenlabs>=2.0.0
 sherpa-onnx>=1.10.0
+pywebview>=5.3.2
+Pillow>=10.0.0
+pystray>=0.19.5

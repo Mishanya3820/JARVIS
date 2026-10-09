@@ -4,6 +4,7 @@ import threading
 import urllib.request
 import warnings
 import wave
+from collections import deque
  
 import numpy as np
 import sounddevice as sd
@@ -17,6 +18,18 @@ VAD_THRESHOLD = 0.5
 SILENCE_DURATION = 0.30
 _WINDOW_SAMPLES = 512
 PLAYBACK_PADDING_MS = 80
+ 
+# Silero VAD подтверждает начало речи только после MIN_SPEECH_DURATION_S
+# секунд непрерывной речи (см. min_speech_duration ниже) — то есть первые
+# ~250 мс произнесённого слова проходят через VAD ДО того, как
+# is_speech_detected() впервые вернёт True. Если не буферизовать этот
+# кусок отдельно, он безвозвратно теряется и не попадает в GigaAM — это
+# и было причиной просадки качества распознавания после перехода на
+# sherpa-onnx VAD. PRE_SPEECH_PAD_SECONDS держит с запасом чуть больше,
+# чем MIN_SPEECH_DURATION_S, чтобы гарантированно захватить самое начало.
+MIN_SPEECH_DURATION_S = 0.25
+PRE_SPEECH_PAD_SECONDS = 0.35
+_PRE_SPEECH_PAD_BLOCKS = max(1, int(round(PRE_SPEECH_PAD_SECONDS * SAMPLE_RATE / _WINDOW_SAMPLES)))
  
 # NOTE: VAD теперь работает через sherpa-onnx (ONNX Runtime), а не через
 # пакет silero-vad + torch. Это тот же движок, который уже используется для
@@ -142,7 +155,7 @@ def get_vad_model():
             model=VAD_MODEL_PATH,
             threshold=VAD_THRESHOLD,
             min_silence_duration=SILENCE_DURATION,
-            min_speech_duration=0.25,
+            min_speech_duration=MIN_SPEECH_DURATION_S,
             window_size=_WINDOW_SAMPLES,
         ),
         sample_rate=SAMPLE_RATE,
@@ -229,6 +242,12 @@ def record_and_transcribe(max_seconds: float = 12.0, silence_duration: float = S
     speech_started = False
     was_speech = False
     audio_chunks = []
+    # Буфер "до речи": хранит последние N необработанных AGC блоков (после
+    # HPF), пока VAD ещё не подтвердил начало речи. Как только подтвердил —
+    # содержимое буфера уходит в начало audio_chunks, чтобы не терять первые
+    # ~250 мс слова, съеденные задержкой подтверждения VAD (см. комментарий
+    # у PRE_SPEECH_PAD_SECONDS выше).
+    pre_speech_buffer = deque(maxlen=_PRE_SPEECH_PAD_BLOCKS)
     print("Слушаю... (GigaAM + Silero VAD)")
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=_WINDOW_SAMPLES) as stream:
         while total_samples < max_samples:
@@ -251,12 +270,20 @@ def record_and_transcribe(max_seconds: float = 12.0, silence_duration: float = S
             if is_speech and not was_speech:
                 speech_started = True
                 print("[VAD] Речь обнаружена.")
+                # Подставляем всё, что накопилось в пред-буфере (это и есть
+                # "потерянное" начало слова), затем очищаем — дальше блоки
+                # добавляются напрямую.
+                for buffered_block in pre_speech_buffer:
+                    audio_chunks.append(agc.process(buffered_block))
+                pre_speech_buffer.clear()
             if speech_started:
                 # AGC применяется только здесь, ПОСЛЕ решения VAD — усиление
                 # тихого голоса не должно влиять на то, что видит сам VAD
                 # (иначе поднятый шумовой пол мог бы провоцировать ложные
                 # срабатывания).
                 audio_chunks.append(agc.process(block))
+            else:
+                pre_speech_buffer.append(block)
             if not speech_started and total_samples >= pre_speech_max_samples:
                 print("[VAD] Таймаут ожидания речи.")
                 break

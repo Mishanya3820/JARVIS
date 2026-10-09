@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS — Local AI System</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">JARVIS</div>
+      <div class="brand-sub">LOCAL INTELLIGENCE</div>
+    </div>
+
+    <nav class="nav-list" id="navList">
+      <button class="nav-btn active" data-page="system">
+        <span class="nav-icon">⌂</span><span class="nav-label">Система</span>
+      </button>
+      <button class="nav-btn" data-page="notes">
+        <span class="nav-icon">▤</span><span class="nav-label">Заметки</span>
+      </button>
+      <button class="nav-btn" data-page="reminders">
+        <span class="nav-icon">◷</span><span class="nav-label">Напоминания</span>
+      </button>
+      <button class="nav-btn" data-page="settings">
+        <span class="nav-icon">⚙</span><span class="nav-label">Настройки</span>
+      </button>
+      <div class="nav-indicator" id="navIndicator"></div>
+    </nav>
+
+    <div class="divider"></div>
+
+    <div class="status-title">СОСТОЯНИЕ СИСТЕМЫ</div>
+    <div class="status-list" id="statusList">
+      <div class="status-row"><span>GigaAM STT</span><span class="dot" data-dot="gigaAM">●</span></div>
+      <div class="status-row"><span>Wake word</span><span class="dot" data-dot="wake">●</span></div>
+      <div class="status-row"><span>Local commands</span><span class="dot" data-dot="local">●</span></div>
+      <div class="status-row"><span>Groq</span><span class="dot" data-dot="groq">●</span></div>
+      <div class="status-row"><span>TTS</span><span class="dot" data-dot="xtts">●</span></div>
+    </div>
+
+    <div class="footer-tag">OFFLINE-FIRST • WINDOWS</div>
+  </aside>
+
+  <main class="content">
+
+    <!-- ================= SYSTEM PAGE ================= -->
+    <section class="page active" id="page-system">
+      <header class="page-header">
+        <div>
+          <h1>Система JARVIS</h1>
+          <p class="subtitle">Локальный голосовой интерфейс и управление системой</p>
+        </div>
+        <div class="net-badge" id="netBadge">●&nbsp;&nbsp;проверка сети</div>
+      </header>
+
+      <div class="card hero">
+        <canvas id="orb" width="142" height="142"></canvas>
+        <div class="hero-text">
+          <div class="hero-label">CENTRAL INTELLIGENCE</div>
+          <div class="hero-status-text" id="statusText">Загрузка компонентов...</div>
+        </div>
+        <div class="hero-pill" id="heroStatus">●&nbsp;&nbsp;ИНИЦИАЛИЗАЦИЯ</div>
+      </div>
+
+      <div class="stats-row">
+        <div class="card stat-card">
+          <div class="stat-title">STT</div>
+          <div class="stat-value">GigaAM v3</div>
+          <div class="stat-sub">Речь → текст</div>
+        </div>
+        <div class="card stat-card">
+          <div class="stat-title">WAKE</div>
+          <div class="stat-value">Джарвис</div>
+          <div class="stat-sub">Голосовая активация</div>
+        </div>
+        <div class="card stat-card">
+          <div class="stat-title">TTS</div>
+          <div class="stat-value" id="ttsEngineStat">Coqui XTTS-v2</div>
+          <div class="stat-sub">Выбранный движок</div>
+        </div>
+      </div>
+
+      <div class="card console">
+        <div class="console-top">
+          <span class="console-label">КОНСОЛЬ</span>
+          <span class="console-sub">LOCAL SESSION</span>
+        </div>
+        <div class="log-box" id="log"></div>
+      </div>
+
+      <div class="command-row">
+        <input id="cmdInput" type="text" placeholder="Введите команду или вопрос...">
+        <button id="sendBtn" class="btn-square btn-accent" title="Отправить">➜</button>
+        <button id="micBtn" class="btn-square btn-mic" title="Микрофон" disabled>●</button>
+      </div>
+    </section>
+
+    <!-- ================= NOTES PAGE ================= -->
+    <section class="page" id="page-notes">
+      <header class="page-header">
+        <div>
+          <h1>Заметки</h1>
+          <p class="subtitle">Локальные заметки сохраняются на компьютере и не отправляются в Groq.</p>
+        </div>
+      </header>
+      <div class="card list-card">
+        <div class="row-input">
+          <input id="noteInput" type="text" placeholder="Новая заметка...">
+          <button id="addNoteBtn" class="btn-pill btn-accent">Добавить</button>
+        </div>
+        <div class="list-box" id="notesBox">Заметок пока нет.</div>
+      </div>
+    </section>
+
+    <!-- ================= REMINDERS PAGE ================= -->
+    <section class="page" id="page-reminders">
+      <header class="page-header">
+        <div>
+          <h1>Напоминания</h1>
+          <p class="subtitle">JARVIS проверяет время в фоне. Напоминания сохраняются локально.</p>
+        </div>
+      </header>
+      <div class="card list-card">
+        <div class="row-input">
+          <input id="reminderInput" type="text" placeholder="О чём напомнить..." class="grow">
+          <input id="reminderWhen" type="text" placeholder="Например: 18:30" class="fixed-w">
+          <button id="addReminderBtn" class="btn-pill btn-accent">Добавить</button>
+        </div>
+        <div class="hint">Можно указать: 18:30, завтра в 10:00 или через 20 минут.</div>
+        <div class="list-box" id="remindersBox">Активных напоминаний нет.</div>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS PAGE ================= -->
+    <section class="page" id="page-settings">
+      <header class="page-header">
+        <div>
+          <h1>Настройки</h1>
+          <p class="subtitle">Параметры JARVIS и голосового движка</p>
+        </div>
+      </header>
+
+      <div class="settings-scroll">
+
+        <div class="section-title">ПРОИЗВОДИТЕЛЬНОСТЬ</div>
+        <div class="card settings-card">
+          <div class="field-title">Режим работы</div>
+          <div class="field-hint">Меняет количество CPU-потоков. Модели не выгружаются автоматически.</div>
+          <select id="modeSelect" class="select"></select>
+        </div>
+
+        <div class="section-title">ОНЛАЙН-ОТВЕТЫ</div>
+        <div class="card settings-card two-col">
+          <div>
+            <div class="field-hint">Groq API-ключ</div>
+            <input id="groqKey" type="password" placeholder="Введите новый ключ для замены">
+          </div>
+          <div>
+            <div class="field-hint">Модель Groq</div>
+            <input id="groqModel" type="text">
+          </div>
+        </div>
+
+        <div class="section-title">ГОЛОС JARVIS</div>
+        <div class="card settings-card">
+          <div class="row-between">
+            <div class="field-title">Движок озвучки</div>
+            <select id="engineSelect" class="select select-inline"></select>
+          </div>
+
+          <div class="engine-panel" id="panel-coqui">
+            <div class="field-hint">Reference WAV</div>
+            <input id="cwav" type="text">
+            <div class="row-between" style="margin-top:10px;">
+              <div class="field-hint" style="margin:0;">Устройство</div>
+              <select id="cdev" class="select select-sm select-inline">
+                <option value="cpu">cpu</option>
+                <option value="cuda">cuda</option>
+              </select>
+            </div>
+            <div class="field-hint" style="margin-top:10px;">Язык</div>
+            <input id="clang" type="text">
+            <label class="checkbox-row">
+              <input id="csplit" type="checkbox">
+              <span>Разбивать длинные ответы на предложения</span>
+            </label>
+          </div>
+
+          <div class="engine-panel hidden" id="panel-elevenlabs">
+            <div class="two-col">
+              <div>
+                <div class="field-hint">API-ключ ElevenLabs</div>
+                <input id="ekey" type="password" placeholder="Введите новый ключ">
+              </div>
+              <div>
+                <div class="field-hint">Voice ID</div>
+                <input id="evoice" type="text" placeholder="Voice ID">
+              </div>
+            </div>
+            <div class="field-hint" style="margin-top:10px;">Модель</div>
+            <select id="emodel" class="select">
+              <option value="eleven_multilingual_v2">eleven_multilingual_v2</option>
+              <option value="eleven_flash_v2_5">eleven_flash_v2_5</option>
+            </select>
+          </div>
+
+          <div class="engine-panel hidden" id="panel-silero">
+            <div class="two-col">
+              <div>
+                <div class="field-hint">Голос</div>
+                <select id="speaker" class="select"></select>
+              </div>
+              <div>
+                <div class="field-hint">Устройство</div>
+                <select id="sdev" class="select">
+                  <option value="cpu">cpu</option>
+                  <option value="cuda">cuda</option>
+                </select>
+              </div>
+            </div>
+            <div class="field-hint" style="margin-top:10px;">Частота дискретизации</div>
+            <select id="srate" class="select">
+              <option value="24000">24000</option>
+              <option value="48000">48000</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-title">ГОЛОСОВАЯ АКТИВАЦИЯ</div>
+        <div class="card settings-card">
+          <div class="field-title">Wake word</div>
+          <div class="field-hint">Фраза активации: «Джарвис». Rustpotter слушает микрофон до обнаружения ключевого слова.</div>
+          <label class="checkbox-row">
+            <input id="wakeToggle" type="checkbox">
+            <span>Включить голосовую активацию</span>
+          </label>
+        </div>
+
+        <div class="settings-save-row">
+          <button id="saveBtn" class="btn-pill btn-accent">Сохранить настройки</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div id="toastContainer"></div>
+<div id="reminderToastContainer"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -68,6 +68,22 @@ def delete_note(query: str) -> str:
     return f"Заметка удалена: {target.get('text', '')}."
 
 
+def delete_note_by_id(note_id: str) -> dict | None:
+    """Удаляет заметку по её стабильному id (см. add_note). В отличие от
+    delete_note(query) — точечное удаление без нечёткого поиска по тексту,
+    для UI (кнопка "удалить" у конкретной заметки в списке)."""
+    note_id = (note_id or "").strip()
+    if not note_id:
+        return None
+    notes = load_notes()
+    target = next((note for note in notes if note.get("id") == note_id), None)
+    if target is None:
+        return None
+    notes.remove(target)
+    _save(NOTES_FILE, notes)
+    return target
+
+
 def format_notes() -> str:
     notes = load_notes()
     if not notes:
