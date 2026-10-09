@@ -1,9 +1,14 @@
 from __future__ import annotations
  
+import io
+import json
 import os
 import threading
 import time
+import wave
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
  
 from jarvis_paths import PROJECT_DIR, SILERO_MODELS_DIR, TTS_MODELS_DIR, setup_environment
  
@@ -13,7 +18,7 @@ os.environ["TTS_HOME"] = str(TTS_MODELS_DIR)
 import numpy as np
 import sounddevice as sd
  
-from jarvis_settings import get_elevenlabs_api_key, load_settings
+from jarvis_settings import get_elevenlabs_api_key, get_fish_audio_api_key, load_settings
  
 _tts = None
 _silero = None
@@ -178,6 +183,52 @@ def _speak_elevenlabs(text: str, settings: dict) -> None:
         raise RuntimeError("Для JARVIS сейчас используется только pcm_24000 для ElevenLabs.")
  
  
+def _speak_fish_audio(text: str, settings: dict) -> None:
+    api_key = get_fish_audio_api_key(settings)
+    if not api_key:
+        raise RuntimeError("Не найден Fish Audio API-ключ. Добавь его в Настройки → Голос JARVIS.")
+    voice_id = str(settings.get("fish_audio_voice_id", "")).strip()
+    if not voice_id:
+        raise RuntimeError("Не задан Fish Audio Voice / Reference ID в настройках.")
+    model = str(settings.get("fish_audio_model", "s2.1-pro")).strip() or "s2.1-pro"
+    payload = json.dumps({"text": text, "reference_id": voice_id, "format": "wav"}, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        "https://api.fish.audio/v1/tts",
+        data=payload,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "model": model},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=90) as response:
+            audio_bytes = response.read()
+    except HTTPError as exc:
+        details = exc.read(1200).decode("utf-8", errors="replace").strip()
+        if exc.code in (401, 403):
+            raise RuntimeError("Fish Audio отклонил API-ключ или доступ к выбранной модели.") from exc
+        if exc.code == 429:
+            raise RuntimeError("Fish Audio: превышен лимит запросов или закончился доступный баланс.") from exc
+        raise RuntimeError(f"Ошибка Fish Audio API ({exc.code}): {details or exc.reason}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Не удалось подключиться к Fish Audio: {exc.reason}") from exc
+    if not audio_bytes:
+        raise RuntimeError("Fish Audio вернул пустой аудиопоток.")
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wav:
+            if wav.getcomptype() != "NONE":
+                raise RuntimeError("Fish Audio вернул WAV с неподдерживаемым сжатием.")
+            channels, sample_width, sample_rate = wav.getnchannels(), wav.getsampwidth(), wav.getframerate()
+            frames = wav.readframes(wav.getnframes())
+    except (wave.Error, EOFError) as exc:
+        raise RuntimeError("Fish Audio вернул аудио не в WAV-формате. Проверь доступность WAV в API.") from exc
+    if sample_width != 2:
+        raise RuntimeError(f"Fish Audio вернул WAV с неподдерживаемой разрядностью: {sample_width * 8} бит.")
+    audio_np = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    if channels > 1:
+        usable = (audio_np.size // channels) * channels
+        audio_np = audio_np[:usable].reshape(-1, channels).mean(axis=1)
+    _play_pcm_float(audio_np, sample_rate, int(settings.get("xtts_playback_padding_ms", 80)))
+
+
 _now_playing_lock = threading.Lock()
 _now_playing = {"audio": None, "samplerate": 0, "started_at": 0.0}
  
@@ -210,7 +261,7 @@ def _play_pcm_float(audio, samplerate: int, padding_ms: int) -> None:
  
 def get_engine() -> str:
     engine = str(load_settings().get("tts_engine", "coqui")).strip().lower()
-    return engine if engine in {"coqui", "elevenlabs", "silero"} else "coqui"
+    return engine if engine in {"coqui", "elevenlabs", "fish_audio", "silero"} else "coqui"
  
  
 def is_configured() -> bool:
@@ -218,6 +269,8 @@ def is_configured() -> bool:
     engine = get_engine()
     if engine == "elevenlabs":
         return bool(get_elevenlabs_api_key(settings) and str(settings.get("elevenlabs_voice_id", "")).strip())
+    if engine == "fish_audio":
+        return bool(get_fish_audio_api_key(settings) and str(settings.get("fish_audio_voice_id", "")).strip())
     if engine == "silero":
         return True
     return bool(_get_speaker_wavs())
@@ -232,6 +285,8 @@ def warmup() -> None:
         _get_silero_model()
     elif engine == "elevenlabs" and get_elevenlabs_api_key(settings) and str(settings.get("elevenlabs_voice_id", "")).strip():
         _get_elevenlabs_client()
+    elif engine == "fish_audio":
+        pass  # Remote service; no local model to load.
  
  
 def speak(text: str) -> None:
@@ -243,6 +298,8 @@ def speak(text: str) -> None:
         engine = get_engine()
         if engine == "elevenlabs":
             _speak_elevenlabs(text, settings)
+        elif engine == "fish_audio":
+            _speak_fish_audio(text, settings)
         elif engine == "silero":
             _speak_silero(text, settings)
         else:
