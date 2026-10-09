@@ -40,6 +40,7 @@ from jarvis_settings import (
     SILERO_SPEAKERS,
     TTS_ENGINES,
     get_elevenlabs_api_key,
+    get_fish_audio_api_key,
     get_groq_api_key,
     load_settings,
     save_settings,
@@ -151,6 +152,8 @@ class JarvisWebApi:
                 "xtts_split_sentences": bool(settings.get("xtts_split_sentences", True)),
                 "elevenlabs_voice_id": settings.get("elevenlabs_voice_id", ""),
                 "elevenlabs_model": settings.get("elevenlabs_model", "eleven_multilingual_v2"),
+                "fish_audio_voice_id": settings.get("fish_audio_voice_id", ""),
+                "fish_audio_model": settings.get("fish_audio_model", "s2.1-pro"),
                 "silero_speaker": settings.get("silero_speaker", "eugene"),
                 "silero_device": settings.get("silero_device", "cpu"),
                 "silero_sample_rate": settings.get("silero_sample_rate", 48000),
@@ -158,6 +161,7 @@ class JarvisWebApi:
             },
             "groq_key_set": bool(get_groq_api_key(settings)),
             "eleven_key_set": bool(get_elevenlabs_api_key(settings)),
+            "fish_audio_key_set": bool(get_fish_audio_api_key(settings)),
             "performance_modes": PERFORMANCE_MODES,
             "tts_engines": TTS_ENGINES,
             "silero_speakers": SILERO_SPEAKERS,
@@ -462,6 +466,9 @@ class JarvisWebApi:
         eleven_value = str(payload.get("elevenlabs_api_key", "")).strip()
         if eleven_value and eleven_value != MASK:
             self.settings["elevenlabs_api_key"] = eleven_value
+        fish_value = str(payload.get("fish_audio_api_key", "")).strip()
+        if fish_value and fish_value != MASK:
+            self.settings["fish_audio_api_key"] = fish_value
 
         self.settings.update({
             "performance_mode": payload.get("performance_mode", self.settings.get("performance_mode", "balanced")),
@@ -473,6 +480,8 @@ class JarvisWebApi:
             "xtts_split_sentences": bool(payload.get("xtts_split_sentences", True)),
             "elevenlabs_voice_id": str(payload.get("elevenlabs_voice_id", "")).strip(),
             "elevenlabs_model": payload.get("elevenlabs_model", "eleven_multilingual_v2"),
+            "fish_audio_voice_id": str(payload.get("fish_audio_voice_id", "")).strip(),
+            "fish_audio_model": str(payload.get("fish_audio_model", "s2.1-pro")).strip() or "s2.1-pro",
             "silero_speaker": payload.get("silero_speaker", "eugene"),
             "silero_device": payload.get("silero_device", "cpu"),
             "silero_sample_rate": int(payload.get("silero_sample_rate", 48000)),
