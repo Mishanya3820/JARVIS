@@ -464,11 +464,13 @@ class JarvisWebApi:
         groq_value = str(payload.get("groq_api_key", "")).strip()
         if groq_value and groq_value != MASK:
             self.settings["groq_api_key"] = groq_value
+        
         eleven_value = str(payload.get("elevenlabs_api_key", "")).strip()
         if eleven_value and eleven_value != MASK:
             self.settings["elevenlabs_api_key"] = eleven_value
-            fish_value = str(payload.get("fish_audio_api_key", "")).strip()
-            if fish_value and fish_value != MASK:
+
+        fish_value = str(payload.get("fish_audio_api_key", "")).strip()
+        if fish_value and fish_value != MASK:
                 self.settings["fish_audio_api_key"] = fish_value
 
         self.settings.update({
