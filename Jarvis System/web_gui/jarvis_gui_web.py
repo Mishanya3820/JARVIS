@@ -58,28 +58,28 @@ class JarvisWebApi:
     `pywebview.api.<snake_case_имя>(...)` и возвращает Promise."""
 
     def __init__(self):
-        self.window: webview.Window | None = None
-        self.settings = load_settings()
-        self.models_ready = False
+        self._window: webview.Window | None = None
+        self._settings = load_settings()
+        self._models_ready = False
         self._models_loading = False
-        self.wake_detector = None
+        self._wake_detector = None
         self._wake_running = False
-        self.reminder_stop = None
+        self._reminder_stop = None
         self._speaking_stop = threading.Event()
-        self.tray_icon: Icon | None = None
+        self._tray_icon: Icon | None = None
         self._quitting = False
 
     # ------------------------------------------------------------------ #
     # Инфраструктура: связь с окном, пуш событий в JS
     # ------------------------------------------------------------------ #
-    def set_window(self, window: webview.Window) -> None:
-        self.window = window
+    def _set_window(self, window: webview.Window) -> None:
+        self._window = window
 
     def _js(self, script: str) -> None:
-        if self.window is None:
+        if self._window is None:
             return
         try:
-            self.window.evaluate_js(script)
+            self._window.evaluate_js(script)
         except Exception as exc:
             print(f"[WebGUI] evaluate_js: {exc}")
 
@@ -123,7 +123,7 @@ class JarvisWebApi:
     # Загрузка начального состояния (вызывается из JS один раз при старте)
     # ------------------------------------------------------------------ #
     def get_bootstrap(self) -> dict:
-        settings = self.settings
+        settings = self._settings
         return {
             "settings": {
                 "performance_mode": settings.get("performance_mode", "balanced"),
@@ -166,14 +166,14 @@ class JarvisWebApi:
         return True
 
     def _on_ready_worker(self) -> None:
-        if self.reminder_stop is None:
-            self.reminder_stop = start_reminder_scheduler(self._on_reminder)
+        if self._reminder_stop is None:
+            self._reminder_stop = start_reminder_scheduler(self._on_reminder)
         self._push_dot("local", True)
-        self._push_dot("groq", bool(get_groq_api_key(self.settings)))
+        self._push_dot("groq", bool(get_groq_api_key(self._settings)))
         self._push_dot("xtts", jarvis_tts.is_configured())
         self._push_net(bool(is_online()))
         threading.Thread(target=self._network_loop, daemon=True).start()
-        if self.settings.get("wake_word_enabled"):
+        if self._settings.get("wake_word_enabled"):
             self._start_model_load()
         else:
             self._push_status_text(
@@ -194,7 +194,7 @@ class JarvisWebApi:
     # Загрузка голосовых моделей / wake word
     # ------------------------------------------------------------------ #
     def _load_models(self) -> None:
-        if self._models_loading or self.models_ready:
+        if self._models_loading or self._models_ready:
             return
         self._models_loading = True
         try:
@@ -203,17 +203,17 @@ class JarvisWebApi:
             jarvis_voice.warmup_voice_models()
             self._push_dot("gigaAM", True)
             self._push_dot("local", True)
-            self._push_dot("groq", bool(get_groq_api_key(self.settings)))
+            self._push_dot("groq", bool(get_groq_api_key(self._settings)))
             self._push_dot("xtts", jarvis_tts.is_configured())
             self._push_mic_enabled(True)
-            self.models_ready = True
+            self._models_ready = True
             self._push_status_text("Система готова к работе")
             self._push_state("idle")
             try:
                 jarvis_voice.play_sound(jarvis_voice.SOUND_RUN)
             except Exception:
                 pass
-            if self.settings.get("wake_word_enabled"):
+            if self._settings.get("wake_word_enabled"):
                 self._start_wake()
         except Exception as exc:
             print(f"[JARVIS] Ошибка запуска: {exc}")
@@ -224,7 +224,7 @@ class JarvisWebApi:
             self._models_loading = False
 
     def _start_model_load(self) -> None:
-        if self._models_loading or self.models_ready:
+        if self._models_loading or self._models_ready:
             return
         threading.Thread(target=self._load_models, daemon=True).start()
 
@@ -232,29 +232,29 @@ class JarvisWebApi:
         return value if os.path.isabs(value) else os.path.join(str(PROJECT_DIR), value)
 
     def _start_wake(self) -> None:
-        if self.wake_detector is not None or not self.models_ready:
+        if self._wake_detector is not None or not self._models_ready:
             return
         try:
             from jarvis_wakeword import RustpotterWakeWordDetector
 
-            cli = self._resolve_path(self.settings.get("rustpotter_cli_path", "resources/rustpotter/rustpotter-cli_win_x86_64.exe"))
-            model = self._resolve_path(self.settings.get("rustpotter_model_path", "resources/rustpotter/jarvis-ru.rpw"))
-            self.wake_detector = RustpotterWakeWordDetector(
+            cli = self._resolve_path(self._settings.get("rustpotter_cli_path", "resources/rustpotter/rustpotter-cli_win_x86_64.exe"))
+            model = self._resolve_path(self._settings.get("rustpotter_model_path", "resources/rustpotter/jarvis-ru.rpw"))
+            self._wake_detector = RustpotterWakeWordDetector(
                 on_wake=self._wake_detect,
                 cli_path=cli,
                 model_path=model,
-                threshold=float(self.settings.get("wake_word_threshold", 0.5)),
-                device_index=int(self.settings.get("rustpotter_device_index", 0)),
+                threshold=float(self._settings.get("wake_word_threshold", 0.5)),
+                device_index=int(self._settings.get("rustpotter_device_index", 0)),
             )
-            self.wake_detector.start()
+            self._wake_detector.start()
             self._push_dot("wake", True)
         except Exception as exc:
             print(f"[WakeWord] {exc}")
             self._push_dot("wake", False)
 
     def _stop_wake(self) -> None:
-        detector = self.wake_detector
-        self.wake_detector = None
+        detector = self._wake_detector
+        self._wake_detector = None
         if detector is not None:
             try:
                 detector.stop()
@@ -263,7 +263,7 @@ class JarvisWebApi:
         self._push_dot("wake", False)
 
     def _wake_detect(self) -> None:
-        if self.models_ready and not self._wake_running:
+        if self._models_ready and not self._wake_running:
             self._wake_running = True
             threading.Thread(target=self._voice_reply, daemon=True).start()
 
@@ -299,8 +299,8 @@ class JarvisWebApi:
             self._push_state("error")
         finally:
             self._wake_running = False
-            self._push_mic_enabled(self.models_ready)
-            if self.models_ready and self.settings.get("wake_word_enabled"):
+            self._push_mic_enabled(self._models_ready)
+            if self._models_ready and self._settings.get("wake_word_enabled"):
                 self._start_wake()
 
     def _play_ack_sound_safe(self) -> None:
@@ -364,7 +364,7 @@ class JarvisWebApi:
             self._push_state("error")
         finally:
             self._push_status_text("Система готова к работе")
-            self._push_mic_enabled(self.models_ready)
+            self._push_mic_enabled(self._models_ready)
             self._push_notes()
             self._push_reminders()
             self._push_state("idle")
@@ -378,13 +378,13 @@ class JarvisWebApi:
             threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def mic_input(self) -> None:
-        if self.models_ready:
+        if self._models_ready:
             threading.Thread(target=self._voice_reply, daemon=True).start()
         elif not self._models_loading:
             def _load_then_listen():
                 self._push_mic_enabled(False)
                 self._load_models()
-                if self.models_ready:
+                if self._models_ready:
                     self._voice_reply()
                 else:
                     self._push_mic_enabled(False)
@@ -463,18 +463,18 @@ class JarvisWebApi:
         payload = payload or {}
         groq_value = str(payload.get("groq_api_key", "")).strip()
         if groq_value and groq_value != MASK:
-            self.settings["groq_api_key"] = groq_value
+            self._settings["groq_api_key"] = groq_value
         eleven_value = str(payload.get("elevenlabs_api_key", "")).strip()
         if eleven_value and eleven_value != MASK:
-            self.settings["elevenlabs_api_key"] = eleven_value
+            self._settings["elevenlabs_api_key"] = eleven_value
             fish_value = str(payload.get("fish_audio_api_key", "")).strip()
             if fish_value and fish_value != MASK:
-                self.settings["fish_audio_api_key"] = fish_value
+                self._settings["fish_audio_api_key"] = fish_value
 
-        self.settings.update({
-            "performance_mode": payload.get("performance_mode", self.settings.get("performance_mode", "balanced")),
+        self._settings.update({
+            "performance_mode": payload.get("performance_mode", self._settings.get("performance_mode", "balanced")),
             "groq_model": str(payload.get("groq_model", "")).strip() or "openai/gpt-oss-120b",
-            "tts_engine": payload.get("tts_engine", self.settings.get("tts_engine", "coqui")),
+            "tts_engine": payload.get("tts_engine", self._settings.get("tts_engine", "coqui")),
             "xtts_speaker_wav": str(payload.get("xtts_speaker_wav", "")).strip(),
             "xtts_device": payload.get("xtts_device", "cpu"),
             "xtts_language": str(payload.get("xtts_language", "")).strip() or "ru",
@@ -488,22 +488,22 @@ class JarvisWebApi:
             "silero_sample_rate": int(payload.get("silero_sample_rate", 48000)),
             "wake_word_enabled": bool(payload.get("wake_word_enabled", True)),
         })
-        save_settings(self.settings)
-        jarvis_core.set_groq_model(self.settings["groq_model"])
+        save_settings(self._settings)
+        jarvis_core.set_groq_model(self._settings["groq_model"])
         jarvis_core.reset_groq_client()
         self._push_toast("✓  Настройки сохранены")
-        self._push_dot("groq", bool(get_groq_api_key(self.settings)))
+        self._push_dot("groq", bool(get_groq_api_key(self._settings)))
         self._push_dot("xtts", jarvis_tts.is_configured())
-        if self.settings["wake_word_enabled"]:
-            if self.models_ready:
+        if self._settings["wake_word_enabled"]:
+            if self._models_ready:
                 self._start_wake()
             else:
                 self._start_model_load()
         else:
             self._stop_wake()
-        return {"ok": True, "tts_engine_label": TTS_ENGINES.get(self.settings["tts_engine"], "Coqui XTTS-v2")}
+        return {"ok": True, "tts_engine_label": TTS_ENGINES.get(self._settings["tts_engine"], "Coqui XTTS-v2")}
 
-    def on_close(self) -> bool | None:
+    def _on_close(self) -> bool | None:
         """Обработчик window.events.closing (крестик окна).
 
         По умолчанию закрытие окна сворачивает JARVIS в трей вместо
@@ -520,22 +520,22 @@ class JarvisWebApi:
         if self._quitting:
             return None
         self._ensure_tray()
-        threading.Thread(target=self.window.hide, daemon=True).start()
+        threading.Thread(target=self._window.hide, daemon=True).start()
         return False
 
     def _ensure_tray(self) -> None:
-        if self.tray_icon is not None:
+        if self._tray_icon is not None:
             return
         menu = Menu(
             MenuItem("Открыть JARVIS", self._tray_open, default=True),
             MenuItem("Выход", self._tray_exit),
         )
-        self.tray_icon = Icon("jarvis", _build_tray_image(), title="JARVIS", menu=menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        self._tray_icon = Icon("jarvis", _build_tray_image(), title="JARVIS", menu=menu)
+        threading.Thread(target=self._tray_icon.run, daemon=True).start()
 
     def _tray_open(self, icon, item) -> None:
-        if self.window is not None:
-            threading.Thread(target=self.window.show, daemon=True).start()
+        if self._window is not None:
+            threading.Thread(target=self._window.show, daemon=True).start()
 
     def _tray_exit(self, icon, item) -> None:
         self._quitting = True
@@ -544,16 +544,16 @@ class JarvisWebApi:
         except Exception:
             pass
         self._on_close_worker()
-        if self.window is not None:
+        if self._window is not None:
             try:
-                self.window.destroy()
+                self._window.destroy()
             except Exception:
                 pass
 
     def _on_close_worker(self) -> None:
         try:
-            if self.reminder_stop is not None:
-                self.reminder_stop.set()
+            if self._reminder_stop is not None:
+                self._reminder_stop.set()
         except Exception:
             pass
         try:
@@ -579,8 +579,8 @@ def main() -> None:
         min_size=(980, 680),
         background_color="#080c12",
     )
-    api.set_window(window)
-    window.events.closing += api.on_close
+    api._set_window(window)
+    window.events.closing += api._on_close
     api._ensure_tray()
     webview.start()
 
