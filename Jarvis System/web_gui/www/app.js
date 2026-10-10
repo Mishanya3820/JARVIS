@@ -307,36 +307,162 @@ const notesBox = document.getElementById("notesBox");
 const noteInput = document.getElementById("noteInput");
 const addNoteBtn = document.getElementById("addNoteBtn");
 
-window.jarvisSetNotes = function (notes) {
+let currentNotes = [];
+let editingNoteId = null;
+let editingDraft = "";
+
+const ICON_EDIT =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const ICON_SAVE =
+  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+function makeIconBtn(className, title, html) {
+  const btn = document.createElement("button");
+  btn.className = className;
+  btn.title = title;
+  btn.innerHTML = html;
+  return btn;
+}
+
+function startNoteEdit(note) {
+  editingNoteId = note.id;
+  editingDraft = note.text || "";
+  renderNotes();
+}
+
+function cancelNoteEdit() {
+  editingNoteId = null;
+  editingDraft = "";
+  renderNotes();
+}
+
+async function commitNoteEdit(note) {
+  const text = editingDraft.trim();
+  if (!text) {
+    window.jarvisToast("Текст заметки не может быть пустым");
+    return;
+  }
+  if (text === (note.text || "").trim()) {
+    cancelNoteEdit();
+    return;
+  }
+  const draft = editingDraft;
+  editingNoteId = null;
+  editingDraft = "";
+  const editingRow = notesBox.querySelector(".list-row.editing");
+  if (editingRow) editingRow.classList.add("removing");
+  let result = null;
+  try {
+    result = await window.pywebview.api.edit_note_api(note.id, text);
+  } catch (err) {
+    result = { ok: false, error: String(err) };
+  }
+  if (!result || !result.ok) {
+    // Не сохранилось — возвращаем поле редактирования с тем, что вводил пользователь.
+    if (currentNotes.some((n) => n.id === note.id)) {
+      editingNoteId = note.id;
+      editingDraft = draft;
+    }
+    window.jarvisToast((result && result.error) || "Не удалось сохранить заметку");
+    renderNotes();
+  }
+  // При успехе Python сам присылает обновлённый список (jarvisSetNotes).
+}
+
+function buildNoteViewRow(row, note, i) {
+  const text = document.createElement("span");
+  text.className = "list-row-text";
+  text.textContent = `${i + 1}. ${note.text || ""}`;
+
+  const actions = document.createElement("div");
+  actions.className = "list-row-actions";
+
+  const editBtn = makeIconBtn("list-row-edit", "Изменить заметку", ICON_EDIT);
+  editBtn.addEventListener("click", () => startNoteEdit(note));
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "list-row-del";
+  delBtn.title = "Удалить заметку";
+  delBtn.textContent = "✕";
+  delBtn.addEventListener("click", async () => {
+    row.classList.add("removing");
+    const result = await window.pywebview.api.delete_note_api(note.id);
+    if (!result || !result.ok) row.classList.remove("removing");
+  });
+
+  actions.appendChild(editBtn);
+  actions.appendChild(delBtn);
+  row.appendChild(text);
+  row.appendChild(actions);
+}
+
+function buildNoteEditRow(row, note, i) {
+  row.classList.add("editing");
+
+  const index = document.createElement("span");
+  index.className = "list-row-index";
+  index.textContent = `${i + 1}.`;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "list-row-input";
+  input.value = editingDraft;
+  input.addEventListener("input", () => { editingDraft = input.value; });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitNoteEdit(note); }
+    else if (e.key === "Escape") { e.preventDefault(); cancelNoteEdit(); }
+  });
+
+  const actions = document.createElement("div");
+  actions.className = "list-row-actions";
+  const saveBtn = makeIconBtn("list-row-save", "Сохранить (Enter)", ICON_SAVE);
+  saveBtn.addEventListener("click", () => commitNoteEdit(note));
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "list-row-cancel";
+  cancelBtn.title = "Отмена (Esc)";
+  cancelBtn.textContent = "✕";
+  cancelBtn.addEventListener("click", cancelNoteEdit);
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+
+  row.appendChild(index);
+  row.appendChild(input);
+  row.appendChild(actions);
+
+  requestAnimationFrame(() => {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+function renderNotes() {
   notesBox.innerHTML = "";
-  if (!notes.length) {
+  if (!currentNotes.length) {
     notesBox.classList.add("empty");
     notesBox.textContent = "Заметок пока нет.";
     return;
   }
   notesBox.classList.remove("empty");
-  notes.forEach((note, i) => {
+  currentNotes.forEach((note, i) => {
     const row = document.createElement("div");
     row.className = "list-row";
-
-    const text = document.createElement("span");
-    text.className = "list-row-text";
-    text.textContent = `${i + 1}. ${note.text || ""}`;
-
-    const delBtn = document.createElement("button");
-    delBtn.className = "list-row-del";
-    delBtn.title = "Удалить заметку";
-    delBtn.textContent = "✕";
-    delBtn.addEventListener("click", async () => {
-      row.classList.add("removing");
-      const result = await window.pywebview.api.delete_note_api(note.id);
-      if (!result || !result.ok) row.classList.remove("removing");
-    });
-
-    row.appendChild(text);
-    row.appendChild(delBtn);
+    if (note.id === editingNoteId) buildNoteEditRow(row, note, i);
+    else buildNoteViewRow(row, note, i);
     notesBox.appendChild(row);
   });
+}
+
+window.jarvisSetNotes = function (notes) {
+  currentNotes = notes || [];
+  // Редактируемую заметку могли удалить голосом — сбрасываем режим правки.
+  if (editingNoteId && !currentNotes.some((n) => n.id === editingNoteId)) {
+    editingNoteId = null;
+    editingDraft = "";
+  }
+  renderNotes();
 };
 
 addNoteBtn.addEventListener("click", async () => {
@@ -398,14 +524,11 @@ const csplit = document.getElementById("csplit");
 const ekey = document.getElementById("ekey");
 const evoice = document.getElementById("evoice");
 const emodel = document.getElementById("emodel");
-const fkey = document.getElementById("fkey");
-const fvoice = document.getElementById("fvoice");
-const fmodel = document.getElementById("fmodel");
 const speakerSelect = document.getElementById("speaker");
 const sdev = document.getElementById("sdev");
 const srate = document.getElementById("srate");
 
-const ENGINE_PANELS = { coqui: "panel-coqui", elevenlabs: "panel-elevenlabs", fish_audio: "panel-fish_audio", silero: "panel-silero" };
+const ENGINE_PANELS = { coqui: "panel-coqui", elevenlabs: "panel-elevenlabs", silero: "panel-silero" };
 const MASK = "•".repeat(16);
 
 function showEnginePanel(key) {
@@ -439,9 +562,6 @@ function applyBootstrap(data) {
   ekey.value = data.eleven_key_set ? MASK : "";
   evoice.value = st.elevenlabs_voice_id;
   emodel.value = st.elevenlabs_model;
-  fkey.value = data.fish_audio_key_set ? MASK : "";
-  fvoice.value = st.fish_audio_voice_id || "";
-  fmodel.value = st.fish_audio_model || "s2.1-pro";
 
   cwav.value = st.xtts_speaker_wav;
   cdev.value = st.xtts_device;
@@ -472,9 +592,6 @@ saveBtn.addEventListener("click", async () => {
     elevenlabs_api_key: ekey.value.trim(),
     elevenlabs_voice_id: evoice.value.trim(),
     elevenlabs_model: emodel.value,
-    fish_audio_api_key: fkey.value.trim(),
-    fish_audio_voice_id: fvoice.value.trim(),
-    fish_audio_model: fmodel.value,
     silero_speaker: speakerSelect.value,
     silero_device: sdev.value,
     silero_sample_rate: parseInt(srate.value, 10),

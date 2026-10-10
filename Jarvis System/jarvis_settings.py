@@ -21,7 +21,7 @@ DEFAULT_SETTINGS = {
     "elevenlabs_output_format": "pcm_24000",
     "fish_audio_api_key": "",
     "fish_audio_voice_id": "",
-    "fish_audio_model": "s2.1-pro",
+    "fish_audio_model": "s2.1-pro-free",
     "silero_model": "v5_5_ru",
     "silero_speaker": "eugene",
     "silero_device": "cpu",

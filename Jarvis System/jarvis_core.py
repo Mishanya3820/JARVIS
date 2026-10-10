@@ -197,9 +197,10 @@ def _disambiguate_command_with_llm(text: str, candidates: list[tuple[float, dict
     return None
  
  
-def match_local_command(user_text: str, grammar_text: str | None = None):
+def match_local_command_ex(user_text: str, grammar_text: str | None = None):
     """Выполняет локальную команду, отдавая приоритет grammar_text.
  
+    Возвращает (сообщение, команда_найдена, команда_выполнена_успешно).
     Для команд с динамическими аргументами (например, заметка или
     напоминание) короткий результат грамматики может содержать только
     саму команду без аргумента. В таком случае он не выполняется, а
@@ -225,8 +226,8 @@ def match_local_command(user_text: str, grammar_text: str | None = None):
               f"slots={match.result.slots} источник={'grammar' if candidate == grammar_text else 'free'}")
         result = execute_local_command(match)
         if not result.get("ok"):
-            return result.get("message", "Не удалось выполнить команду."), True
-        return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True
+            return result.get("message", "Не удалось выполнить команду."), True, False
+        return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True, True
  
     # Обычный фаззи-матчинг не нашёл ничего достаточно уверенного - если
     # есть команды-кандидаты рядом с порогом, пробуем спросить LLM, вместо
@@ -245,10 +246,16 @@ def match_local_command(user_text: str, grammar_text: str | None = None):
                 print(f"[LOCAL INTENT] {match.result.intent_id} ({match.result.confidence * 100:.1f}%) slots={match.result.slots} источник=LLM")
                 result = execute_local_command(match)
                 if not result.get("ok"):
-                    return result.get("message", "Не удалось выполнить команду."), True
-                return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True
- 
-    return None, False
+                    return result.get("message", "Не удалось выполнить команду."), True, False
+                return result.get("message", f"Команда '{match.result.intent_id}' выполнена."), True, True
+
+    return None, False, True
+
+
+def match_local_command(user_text: str, grammar_text: str | None = None):
+    """Совместимая обёртка: (сообщение, команда_найдена)."""
+    message, matched, _ok = match_local_command_ex(user_text, grammar_text)
+    return message, matched
  
  
 SYSTEM_PROMPT = """
@@ -261,6 +268,7 @@ SYSTEM_PROMPT = """
 - Если пользователь задаёт обычный вопрос, отвечай непосредственно.
 - Если для сложного действия подходит доступный инструмент, используй его.
 - Не утверждай, что действие выполнено, если инструмент сообщил об ошибке.
+- У тебя нет доступа к заметкам и напоминаниям: их создаёт программа сама по фразам вроде «напомни мне через 20 минут позвонить маме». Если пользователь просит о таком и до тебя дошёл запрос, НЕ говори, что напоминание или заметка создана — скажи, что не разобрал фразу, и попроси повторить с указанием времени.
 - Отвечай кратко, потому что ответ будет озвучен голосом.
 """
  
@@ -292,8 +300,14 @@ _SENTENCE_END_RE = re.compile(r"(?<=[.!?…])\s+")
  
  
 def process_message(user_text: str, grammar_text: str | None = None, on_speak_ready=None) -> dict:
-    local_result, local_matched = match_local_command(user_text, grammar_text)
+    local_result, local_matched, local_ok = match_local_command_ex(user_text, grammar_text)
     if local_matched:
+        if not local_ok:
+            # Команда распознана, но не выполнена (не разобрали время
+            # напоминания, нет файла и т.п.). Раньше это уходило в ветку
+            # "local" и интерфейс проигрывал случайный звук "ок" — будто
+            # всё получилось. Теперь причину озвучиваем.
+            return {"type": "tts", "text": local_result or "Не удалось выполнить команду."}
         if local_result and local_result.startswith("Сейчас "):
             return {"type": "tts", "text": local_result}
         return {"type": "local", "text": local_result or "Команда выполнена."}

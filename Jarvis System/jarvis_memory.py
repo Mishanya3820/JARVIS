@@ -84,6 +84,27 @@ def delete_note_by_id(note_id: str) -> dict | None:
     return target
 
 
+def update_note(note_id: str, text: str) -> dict | None:
+    """Меняет текст заметки по её id (кнопка "изменить" в списке заметок).
+    Возвращает обновлённую заметку или None, если такой id нет. Пустой
+    текст — ValueError, чтобы случайно не стереть заметку."""
+    note_id = (note_id or "").strip()
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("Текст заметки пустой.")
+    if not note_id:
+        return None
+    with _LOCK:
+        notes = load_notes()
+        target = next((note for note in notes if note.get("id") == note_id), None)
+        if target is None:
+            return None
+        target["text"] = text
+        target["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
+        _save(NOTES_FILE, notes)
+    return target
+
+
 def format_notes() -> str:
     notes = load_notes()
     if not notes:
@@ -91,54 +112,128 @@ def format_notes() -> str:
     return "Сейчас ваши заметки: " + "; ".join(f"{i + 1}. {n.get('text', '')}" for i, n in enumerate(notes[-20:]))
 
 
-def _parse_clock(value: str) -> tuple[int, int] | None:
-    match = re.fullmatch(r"(\d{1,2})(?::|\.)?(\d{2})?", value.strip())
+# Числа, которые GigaAM может написать словами ("через двадцать минут",
+# "в шесть вечера"). Нужны и парсеру времени ниже, и регулярке в jarvis_intent.
+NUMBER_WORDS = {
+    "ноль": 0, "один": 1, "одна": 1, "одну": 1, "два": 2, "две": 2, "три": 3,
+    "четыре": 4, "пять": 5, "шесть": 6, "семь": 7, "восемь": 8, "девять": 9,
+    "десять": 10, "одиннадцать": 11, "двенадцать": 12, "тринадцать": 13,
+    "четырнадцать": 14, "пятнадцать": 15, "шестнадцать": 16, "семнадцать": 17,
+    "восемнадцать": 18, "девятнадцать": 19, "двадцать": 20, "тридцать": 30,
+    "сорок": 40, "пятьдесят": 50, "шестьдесят": 60,
+}
+_TENS_VALUES = {20, 30, 40, 50, 60}
+
+_MONTHS = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6,
+    "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+_TIME_HINT = "Не понял время напоминания. Пример: «через 20 минут», «в 18:30» или «завтра в 10:00»."
+_CLOCK_RE = re.compile(
+    r"(?:^|\s)(?:(?:в|на)\s+)?(\d{1,2})(?:[:.\s](\d{2}))?\s*(?:час(?:а|ов)?|ч)?(?:\s*(утра|вечера|дня|ночи))?\s*$"
+)
+
+
+def words_to_digits(text: str) -> str:
+    """"через двадцать пять минут" -> "через 25 минут", "в шесть тридцать
+    вечера" -> "в 6 30 вечера", "через полчаса" -> "через 30 минут".
+    Применяется только к фразе со временем, а не к тексту напоминания."""
+    text = (text or "").lower().replace("ё", "е")
+    text = re.sub(r"\bполчаса\b", "30 минут", text)
+    text = re.sub(r"\bполтора\s+часа\b", "90 минут", text)
+    text = re.sub(r"\bчерез\s+(час|минуту|секунду)\b", r"через 1 \1", text)
+    tokens = text.split()
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        value = NUMBER_WORDS.get(tokens[i])
+        if value is None:
+            out.append(tokens[i])
+            i += 1
+            continue
+        if value in _TENS_VALUES and i + 1 < len(tokens) and 1 <= NUMBER_WORDS.get(tokens[i + 1], 0) <= 9:
+            value += NUMBER_WORDS[tokens[i + 1]]
+            i += 1
+        out.append(str(value))
+        i += 1
+    return " ".join(out)
+
+
+def _apply_part_of_day(hour: int, part: str | None) -> int:
+    if part == "вечера" and hour < 12:
+        return hour + 12
+    if part == "дня" and 1 <= hour <= 6:
+        return hour + 12
+    if part == "ночи":
+        if hour == 12:
+            return 0
+        if 9 <= hour < 12:
+            return hour + 12
+    return hour
+
+
+def _clock_from(text: str) -> tuple[int, int] | None:
+    match = _CLOCK_RE.search((text or "").strip())
     if not match:
         return None
     hour, minute = int(match.group(1)), int(match.group(2) or 0)
+    hour = _apply_part_of_day(hour, match.group(3))
     return (hour, minute) if 0 <= hour <= 23 and 0 <= minute <= 59 else None
 
 
 def parse_reminder_datetime(spec: str, now: dt.datetime | None = None) -> dt.datetime:
     now = now or dt.datetime.now()
-    raw = re.sub(r"\s+", " ", (spec or "").strip().lower().replace("ё", "е"))
-    relative = re.fullmatch(r"через\s+(\d+)\s*(минут(?:у|ы)?|мин|час(?:а|ов)?|ч)", raw)
+    raw = re.sub(r"\s+", " ", (spec or "").strip().lower().replace("ё", "е")).strip(" .,!?;:")
+    raw = re.sub(r"^на\s+", "", words_to_digits(raw))
+
+    relative = re.fullmatch(r"через\s+(\d+)\s*(секунд\w*|сек|минут\w*|мин|час\w*|ч|дн\w*|день)", raw)
     if relative:
-        amount = int(relative.group(1))
-        return now + (dt.timedelta(hours=amount) if relative.group(2).startswith(("час", "ч")) else dt.timedelta(minutes=amount))
+        amount, unit = int(relative.group(1)), relative.group(2)
+        if unit.startswith("сек"):
+            return now + dt.timedelta(seconds=amount)
+        if unit.startswith("мин"):
+            return now + dt.timedelta(minutes=amount)
+        if unit.startswith("ч"):
+            return now + dt.timedelta(hours=amount)
+        return now + dt.timedelta(days=amount)
 
-    tomorrow = raw.startswith("завтра")
-    if tomorrow:
-        raw = raw[len("завтра"):].strip()
-        if not raw:
-            base = now + dt.timedelta(days=1)
-            return base.replace(hour=9, minute=0, second=0, microsecond=0)
-
-    clock_match = re.search(r"(?:в\s*)?(\d{1,2}(?::|\.)\d{2}|\d{1,2})\s*(?:час(?:а|ов)?|ч)?$", raw)
-    if clock_match:
-        clock = _parse_clock(clock_match.group(1))
-        if clock:
-            hour, minute = clock
-            base = now + dt.timedelta(days=1) if tomorrow else now
-            result = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if not tomorrow and result <= now:
-                result += dt.timedelta(days=1)
-            return result
-
-    months = {"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
-    date_match = re.search(r"(\d{1,2})\s+([а-я]+)(?:\s+(\d{4}))?", raw)
-    if date_match and date_match.group(2) in months:
-        day, month = int(date_match.group(1)), months[date_match.group(2)]
+    # Дата с названием месяца разбирается ДО простого времени: раньше
+    # "5 октября в 14:00" ловилось как просто "в 14:00" и дата терялась.
+    date_match = re.search(r"(\d{1,2})\s+(" + "|".join(_MONTHS) + r")(?:\s+(\d{4}))?", raw)
+    if date_match:
+        day, month = int(date_match.group(1)), _MONTHS[date_match.group(2)]
         year = int(date_match.group(3) or now.year)
-        tail = raw[date_match.end():].strip()
-        clock_match = re.search(r"(?:в\s*)?(\d{1,2})(?::|\.)(\d{2})", tail)
-        hour, minute = (int(clock_match.group(1)), int(clock_match.group(2))) if clock_match else (9, 0)
-        result = dt.datetime(year, month, day, hour, minute)
+        hour, minute = _clock_from(raw[date_match.end():]) or (9, 0)
+        try:
+            result = dt.datetime(year, month, day, hour, minute)
+        except ValueError:
+            raise ValueError("Не понял дату напоминания.") from None
         if result <= now and not date_match.group(3):
             result = result.replace(year=year + 1)
         return result
 
-    raise ValueError("Не понял время напоминания. Пример: «через 20 минут», «в 18:30» или «завтра в 10:00».")
+    day_offset = None
+    for word, offset in (("послезавтра", 2), ("завтра", 1), ("сегодня", 0)):
+        if raw.startswith(word):
+            day_offset = offset
+            raw = raw[len(word):].strip()
+            break
+    if day_offset is not None and not raw:
+        if day_offset == 0:
+            raise ValueError(_TIME_HINT)
+        return (now + dt.timedelta(days=day_offset)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+    clock = _clock_from(raw)
+    if clock:
+        hour, minute = clock
+        result = (now + dt.timedelta(days=day_offset or 0)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if result <= now:
+            if day_offset is not None:
+                raise ValueError("Это время уже прошло. Назовите время в будущем.")
+            result += dt.timedelta(days=1)
+        return result
+
+    raise ValueError(_TIME_HINT)
 
 
 def add_reminder(text: str, when: str) -> dict:

@@ -1,20 +1,3 @@
-"""Современный GUI JARVIS на HTML/CSS/JS поверх pywebview.
-
-Заменяет jarvis_gui.py (customtkinter). Вся логика голосового движка,
-команд и настроек не тронута — это по-прежнему jarvis_core / jarvis_voice /
-jarvis_tts / jarvis_memory / jarvis_settings. Этот модуль отвечает только
-за то, чтобы:
-  1) поднять окно pywebview с www/index.html;
-  2) прокинуть в JS вызовы (JarvisWebApi — это js_api для pywebview,
-     методы доступны в браузере как `pywebview.api.<имя>(...)`);
-  3) пушить события из Python в JS через window.evaluate_js(...), когда
-     меняется состояние (idle/listening/thinking/speaking/error), уровень
-     микрофона/TTS, лог, тосты, индикаторы сети и т.д.
-
-Запуск: python jarvis_gui_web.py (из "Jarvis System/web_gui/", либо через
-установщик/ярлык, который должен указывать сюда вместо jarvis_gui.py).
-"""
-
 from __future__ import annotations
 
 import json
@@ -33,14 +16,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import jarvis_core
 import jarvis_tts
 import jarvis_voice
-from jarvis_memory import add_note, add_reminder, delete_note_by_id, load_notes, load_reminders, start_reminder_scheduler
+from jarvis_memory import add_note, add_reminder, delete_note_by_id, load_notes, load_reminders, start_reminder_scheduler, update_note
 from jarvis_network import is_online
 from jarvis_paths import PROJECT_DIR
 from jarvis_settings import (
     SILERO_SPEAKERS,
     TTS_ENGINES,
     get_elevenlabs_api_key,
-    get_fish_audio_api_key,
     get_groq_api_key,
     load_settings,
     save_settings,
@@ -152,8 +134,6 @@ class JarvisWebApi:
                 "xtts_split_sentences": bool(settings.get("xtts_split_sentences", True)),
                 "elevenlabs_voice_id": settings.get("elevenlabs_voice_id", ""),
                 "elevenlabs_model": settings.get("elevenlabs_model", "eleven_multilingual_v2"),
-                "fish_audio_voice_id": settings.get("fish_audio_voice_id", ""),
-                "fish_audio_model": settings.get("fish_audio_model", "s2.1-pro"),
                 "silero_speaker": settings.get("silero_speaker", "eugene"),
                 "silero_device": settings.get("silero_device", "cpu"),
                 "silero_sample_rate": settings.get("silero_sample_rate", 48000),
@@ -161,7 +141,6 @@ class JarvisWebApi:
             },
             "groq_key_set": bool(get_groq_api_key(settings)),
             "eleven_key_set": bool(get_elevenlabs_api_key(settings)),
-            "fish_audio_key_set": bool(get_fish_audio_api_key(settings)),
             "performance_modes": PERFORMANCE_MODES,
             "tts_engines": TTS_ENGINES,
             "silero_speakers": SILERO_SPEAKERS,
@@ -382,6 +361,7 @@ class JarvisWebApi:
         finally:
             self._push_status_text("Система готова к работе")
             self._push_mic_enabled(self.models_ready)
+            self._push_notes()
             self._push_reminders()
             self._push_state("idle")
 
@@ -431,6 +411,23 @@ class JarvisWebApi:
         self._push_log("JARVIS", f"Заметка удалена: {removed.get('text', '')}")
         return {"ok": True}
 
+    def edit_note_api(self, note_id: str, text: str) -> dict:
+        try:
+            updated = update_note(note_id, text)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            self._push_log("ОШИБКА", str(exc))
+            return {"ok": False, "error": str(exc)}
+        if updated is None:
+            # Заметку успели удалить (например, голосом) — синхронизируем список.
+            self._push_notes()
+            return {"ok": False, "error": "Заметка не найдена."}
+        self._push_notes()
+        self._push_log("JARVIS", f"Заметка изменена: {updated.get('text', '')}")
+        self._push_toast("✓  Заметка изменена")
+        return {"ok": True}
+
     def add_reminder_api(self, text: str, when: str) -> dict:
         text = (text or "").strip()
         when = (when or "").strip()
@@ -466,9 +463,6 @@ class JarvisWebApi:
         eleven_value = str(payload.get("elevenlabs_api_key", "")).strip()
         if eleven_value and eleven_value != MASK:
             self.settings["elevenlabs_api_key"] = eleven_value
-        fish_value = str(payload.get("fish_audio_api_key", "")).strip()
-        if fish_value and fish_value != MASK:
-            self.settings["fish_audio_api_key"] = fish_value
 
         self.settings.update({
             "performance_mode": payload.get("performance_mode", self.settings.get("performance_mode", "balanced")),
@@ -480,8 +474,6 @@ class JarvisWebApi:
             "xtts_split_sentences": bool(payload.get("xtts_split_sentences", True)),
             "elevenlabs_voice_id": str(payload.get("elevenlabs_voice_id", "")).strip(),
             "elevenlabs_model": payload.get("elevenlabs_model", "eleven_multilingual_v2"),
-            "fish_audio_voice_id": str(payload.get("fish_audio_voice_id", "")).strip(),
-            "fish_audio_model": str(payload.get("fish_audio_model", "s2.1-pro")).strip() or "s2.1-pro",
             "silero_speaker": payload.get("silero_speaker", "eugene"),
             "silero_device": payload.get("silero_device", "cpu"),
             "silero_sample_rate": int(payload.get("silero_sample_rate", 48000)),
@@ -566,12 +558,6 @@ class JarvisWebApi:
 
 
 def main() -> None:
-    # Косметические ошибки pywebview на связке WinForms/WebView2
-    # (AccessibilityObject.Bounds recursion, "CoreWebView2Controller members
-    # can only be accessed from the UI thread") не влияют на работу
-    # приложения — это внутренние обращения самого pywebview к window.native,
-    # а не что-то из нашего кода. Глушим уровень логирования, чтобы не
-    # засорять консоль.
     logging.getLogger("pywebview").setLevel(logging.CRITICAL)
 
     api = JarvisWebApi()

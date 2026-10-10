@@ -29,8 +29,6 @@ def setup_environment() -> None:
     # Coqui TTS использует TTS_HOME как корень своего каталога моделей.
     os.environ.setdefault("TTS_HOME", str(TTS_MODELS_DIR))
 
-    # Заодно переносим pip-кэш с системного диска, если JARVIS запускается
-    # из установленной папки. Пользовательские переменные Windows не нужны.
     pip_cache = PROJECT_DIR / "Cache" / "pip"
     pip_cache.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("PIP_CACHE_DIR", str(pip_cache))

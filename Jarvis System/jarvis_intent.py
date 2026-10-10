@@ -6,6 +6,8 @@ from difflib import SequenceMatcher
 from typing import Any
  
 from rapidfuzz.distance import Levenshtein
+
+from jarvis_memory import NUMBER_WORDS
  
  
 @dataclass
@@ -44,6 +46,8 @@ def _score(text: str, phrase: str, command: dict | None = None) -> float:
         return 0.0
     if a == b:
         return 1.0
+    if command and "reminder_text" in command.get("slots", []) and re.match(_REMINDER_VERB, a, re.I):
+        return 0.96
     if a.startswith(b + " "):
         return 0.95
     has_url = bool(re.search(r"(?:https?://|www\.|[a-z0-9-]+\.[a-z]{2,})(?:/\S*)?", a, re.I))
@@ -118,15 +122,38 @@ def _extract_after_prefix(raw: str, prefixes: tuple[str, ...]) -> str | None:
     return None
  
  
-_REMINDER_WHEN = (
-    r"(?:через\s+(?:\d+\s*)?(?:минут(?:у|ы)?|мин|час(?:а|ов)?|ч)"
-    r"|завтра(?:\s+в\s+\d{1,2}(?::|\.)\d{2})?"
-    r"|в\s+\d{1,2}(?::|\.)\d{2}"
-    r"|\d{1,2}\s+[а-я]+(?:\s+\d{4})?(?:\s+в\s+\d{1,2}(?::|\.)\d{2})?)"
+_MONTHS_RE = "января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря"
+_UNIT_WORDS = "|".join(w for w, v in NUMBER_WORDS.items() if 0 <= v <= 9)
+_SMALL_WORDS = "|".join(sorted((w for w, v in NUMBER_WORDS.items() if v < 20), key=len, reverse=True))
+_TENS_WORDS = "|".join(w for w, v in NUMBER_WORDS.items() if v >= 20)
+# Число цифрами или словами: 20, "двадцать", "двадцать пять", "шесть".
+_NUM = rf"(?:\d{{1,3}}|(?:{_TENS_WORDS})(?:\s+(?:{_UNIT_WORDS}))?|{_SMALL_WORDS})"
+_POD = r"(?:утра|вечера|дня|ночи)"
+# Время суток: 18:30, "шесть тридцать", "18 часов", "6 вечера", "в семь утра".
+_CLOCK = (
+    rf"(?:(?:\d{{1,2}}[:.]\d{{2}}|{_NUM}\s+{_NUM}|{_NUM}\s*(?:часов|часа|час|ч)\b)(?:\s*{_POD})?"
+    rf"|{_NUM}\s*{_POD})"
 )
-_REMINDER_VERB = r"^(?:напомни(?:\s+мне)?|(?:поставь|создай|сделай)(?:\s+мне)?\s+напоминание)\s+"
- 
- 
+_REL = (
+    rf"через\s+(?:полчаса|полтора\s+часа"
+    rf"|(?:{_NUM}\s*)?(?:секунд[уы]?|сек|минут[уы]?|мин|час(?:а|ов)?|ч|дн(?:я|ей)|день)\b)"
+)
+_REMINDER_WHEN = (
+    rf"(?:{_REL}"
+    rf"|(?:на\s+)?(?:сегодня|завтра|послезавтра)(?:\s+(?:в|на)\s+{_CLOCK})?"
+    rf"|(?:на\s+)?\d{{1,2}}\s+(?:{_MONTHS_RE})(?:\s+\d{{4}})?(?:\s+(?:в|на)\s+{_CLOCK})?"
+    rf"|(?:в|на)\s+{_CLOCK}"
+    rf"|(?<!\d)\d{{1,2}}:\d{{2}}(?!\d))"
+)
+# Глагол может идти с запятой ("Напомни мне, ...", "Напомни, ...") и с
+# "Джарвис" в начале — GigaAM расставляет знаки препинания.
+_REMINDER_VERB = (
+    r"^\s*(?:джарвис[\s,]+)?"
+    r"(?:напомни\b(?:[\s,]+мне\b)?|(?:поставь|создай|сделай|добавь)(?:\s+мне)?\s+напоминание\b)"
+    r"[\s,:;—-]*"
+)
+
+
 def _extract_reminder(raw: str) -> tuple[str | None, str | None]:
     text = (raw or "").strip()
     verb_match = re.match(_REMINDER_VERB, text, re.I)
@@ -135,19 +162,19 @@ def _extract_reminder(raw: str) -> tuple[str | None, str | None]:
     rest = text[verb_match.end():]
     # Время может стоять и до, и после текста напоминания — "напомни мне
     # ПОЗВОНИТЬ МАМЕ через 20 минут" так же естественно, как и "напомни
-    # через 20 минут позвонить маме". Ищем "when" в любом месте остатка
-    # фразы, а не только в начале, как было раньше.
+    # через 20 минут позвонить маме". Ищем "when" в любом месте остатка.
     when_match = re.search(_REMINDER_WHEN, rest, re.I)
     if not when_match:
         return None, None
     when = when_match.group(0).strip()
     reminder_text = rest[:when_match.start()] + " " + rest[when_match.end():]
-    reminder_text = re.sub(r"\s+", " ", reminder_text).strip(" ,.")
+    reminder_text = re.sub(r"\s+", " ", reminder_text).strip(" ,.:;!?—-")
+    reminder_text = re.sub(r"^(?:что|о том,? что)\s+", "", reminder_text, flags=re.I).strip(" ,.")
     if not reminder_text:
         return None, None
     return reminder_text, when
- 
- 
+
+
 def extract_slots(text: str, slot_names: list[str]) -> dict[str, str]:
     raw = (text or "").strip()
     result: dict[str, str] = {}

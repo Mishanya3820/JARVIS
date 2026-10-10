@@ -28,9 +28,6 @@ html, body {
   font-family: var(--font);
   overflow: hidden;
   user-select: none;
-  /* Chromium/WebView2 учитывает color-scheme и рисует нативные виджеты
-     (в первую очередь — popup выпадающего списка <select>) в тёмной
-     палитре вместо белой по умолчанию. */
   color-scheme: dark;
 }
 
@@ -279,6 +276,47 @@ button, input, select { font-family: var(--font); }
 }
 .list-row:hover .list-row-del { opacity: 1; }
 .list-row-del:hover { background: #3a1f22; color: var(--bad); }
+
+/* Кнопки действий у заметки: изменить (карандаш) / сохранить / отмена */
+.list-row-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.list-row-edit,
+.list-row-save,
+.list-row-cancel {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity .15s, background-color .15s, color .15s;
+}
+.list-row-edit { opacity: 0; }
+.list-row:hover .list-row-edit { opacity: 1; }
+.list-row-edit:hover { background: var(--accent-soft); color: var(--accent); }
+.list-row-save:hover { background: #1c3a2b; color: var(--good); }
+.list-row-cancel:hover { background: #2a3647; color: var(--text); }
+.list-row.editing { background: var(--panel-3); }
+.list-row-index { flex-shrink: 0; color: var(--muted); }
+.list-row-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--field);
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+  user-select: text;
+}
 
 /* ---- Settings ---- */
 .settings-scroll { flex: 1; overflow-y: auto; padding-right: 4px; position: relative; }
